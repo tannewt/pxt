@@ -1,7 +1,7 @@
 /// <reference path="../../built/pxtpackage.d.ts"/>
 /// <reference path="../../built/pxtlib.d.ts"/>
-/// <reference path="../../built/pxtblocks.d.ts"/>
 /// <reference path="../../built/pxtrunner.d.ts" />
+/// <reference path="../../built/pxtblocks.d.ts"/>
 /// <reference path="../../built/pxtsim.d.ts"/>
 
 import * as React from "react";
@@ -1089,7 +1089,7 @@ export class ProjectView extends data.Component<IAppProps, IAppState> {
         });
 
         if (open) {
-            return core.showLoadingAsync(lf('switching to JavaScript...'), promise);
+            return core.showLoadingAsync(lf("switching to JavaScript..."), promise);
         } else {
             return promise;
         }

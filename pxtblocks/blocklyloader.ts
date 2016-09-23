@@ -341,7 +341,7 @@ namespace pxt.blocks {
         if (e && e.parentElement)
             e.parentElement.removeChild(e);
     }
-
+    export var initCallbacks: ((workspace?: Blockly.Workspace, toolbox?: Element) => void)[] = [];
     export function initBlocks(blockInfo: pxtc.BlocksInfo, workspace?: Blockly.Workspace, toolbox?: Element): void {
         init();
 
@@ -449,7 +449,43 @@ namespace pxt.blocks {
                 cachedToolbox = tb.innerHTML;
                 workspace.updateToolbox(tb)
             }
+
+            for (let i = 0; i < initCallbacks.length; ++i) {
+                initCallbacks[i](workspace, tb);
+            }
         }
+    }
+
+    export function restrictToolbox(workspace: Blockly.Workspace, tb: Element, allBlockTypes: { [index: string]: number }): void {
+        console.log(allBlockTypes);
+        console.log(tb);
+        let keepcategories: { [index: string]: number } = {};
+        let categories = tb.querySelectorAll("category");
+        let blocks = tb.querySelectorAll("block");
+        for (let bi = 0; bi < blocks.length; ++bi) {
+            let blk = blocks.item(bi);
+            let type = blk.getAttribute("type");
+            let catName = blk.parentElement.getAttribute("name");
+            if (!allBlockTypes[type]) {
+                blk.parentNode.removeChild(blk);
+            } else {
+                keepcategories[catName] = 1;
+                if (type.indexOf("variables") == 0) {
+                    keepcategories["Variables"] = 1;
+                }
+            }
+        }
+        console.log(keepcategories);
+        for (let ci = 0; ci < categories.length; ++ci) {
+            let cat = categories.item(ci);
+            let catName = cat.getAttribute("name");
+            if (!keepcategories[catName]) {
+                cat.parentNode.removeChild(cat);
+                //cat.setAttribute("style","display: none");
+            }
+        }
+        console.log(tb);
+        workspace.updateToolbox(tb);
     }
 
     function categoryElement(tb: Element, name: string): Element {

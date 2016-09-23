@@ -2,6 +2,7 @@
 /// <reference path="../../built/pxtlib.d.ts"/>
 /// <reference path="../../built/pxtblocks.d.ts"/>
 /// <reference path="../../built/pxtsim.d.ts"/>
+/// <reference path="../../built/pxtrunner.d.ts" />
 
 import * as React from "react";
 import * as ReactDOM from "react-dom";
@@ -895,10 +896,54 @@ export class ProjectView extends data.Component<IAppProps, IAppState> {
                     .done()
 
                 let readme = main.lookupFile("this/README.md");
-                if (readme && readme.content && readme.content.trim())
+                if (readme && readme.content && readme.content.trim()) {
+                    this.restrictToolbox(readme.content);
                     this.setSideMarkdown(readme.content);
+                }
                 else this.setSideDoc(pxt.appTarget.appTheme.sideDoc);
             })
+    }
+
+    restrictToolbox(content: string): void {
+        let regex = /```(sim|blocks|shuffle)\n([\s\S]*?)\n```/gmi;
+        let match: RegExpExecArray;
+        let found = false;
+        let allblocks = "";
+        while ((match = regex.exec(content)) != null) {
+            let blocks = match[2];
+            allblocks += blocks + "\n";
+            found = true;
+        }
+        let promise = new Promise((resolve, reject) => {
+            pxt.runner.initCallbacks.push(
+                function () {
+                    pxt.runner.decompileToBlocksAsync(allblocks, {})
+                        .then((r) => {
+                            let blocksxml: string = r.compileBlocks.outfiles['main.blocks'];
+                            let allBlockTypes: { [index: string]: number } = {};
+                            if (blocksxml) {
+                                let headless = pxt.blocks.loadWorkspaceXml(blocksxml);
+                                let allblocks = headless.getAllBlocks();
+                                for (let bi = 0; bi < allblocks.length; ++bi) {
+                                    let blk = allblocks[bi];
+                                    allBlockTypes[blk.type] = 1;
+                                }
+                            }
+                            resolve(allBlockTypes);
+                        });
+                }
+            )
+        })
+        if (found) {
+            pxt.runner.init();
+            promise.done((allBlockTypes: { [index: string]: number }) => {
+                pxt.blocks.initCallbacks.push(
+                    function (workspace?: Blockly.Workspace, tb?: Element) {
+                        if (!workspace || !tb) return;
+                        pxt.blocks.restrictToolbox(workspace, tb, allBlockTypes);
+                    });
+                });
+        }
     }
 
     removeProject() {

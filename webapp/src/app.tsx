@@ -905,6 +905,7 @@ export class ProjectView extends data.Component<IAppProps, IAppState> {
     }
 
     restrictToolbox(content: string): void {
+        content = content.replace(/((?!.)\s)+/g, "\n");
         let regex = /```(sim|blocks|shuffle)\n([\s\S]*?)\n```/gmi;
         let match: RegExpExecArray;
         let found = false;

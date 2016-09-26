@@ -1,4 +1,5 @@
 /// <reference path="../../built/blockly.d.ts" />
+/// <reference path="../../built/pxtrunner.d.ts" />
 /// <reference path="../../typings/jquery/jquery.d.ts" />
 
 import * as React from "react";
@@ -18,6 +19,10 @@ export class Editor extends srceditor.Editor {
     blockInfo: pxtc.BlocksInfo;
     compilationResult: pxt.blocks.BlockCompilationResult;
     isFirstBlocklyLoad = true;
+    isToolboxExpanded = true;
+    slicedToolbox = false;
+    cachedToolbox: Element;
+    toolboxSubset: { [index: string]: number } = {};
 
     setVisible(v: boolean) {
         super.setVisible(v);
@@ -58,12 +63,13 @@ export class Editor extends srceditor.Editor {
                     this.blockInfo = bi;
 
                     let toolbox = document.getElementById('blocklyToolboxDefinition');
-                    pxt.blocks.initBlocks(this.blockInfo, this.editor, toolbox)
+                    pxt.blocks.initBlocks(this.blockInfo, this.editor, toolbox, this.isFirstBlocklyLoad)
 
                     let xml = this.delayLoadXml;
                     this.delayLoadXml = undefined;
                     this.loadBlockly(xml);
                     this.isFirstBlocklyLoad = false;
+                    if (this.slicedToolbox) this.parent.setToolboxState(this.isToolboxExpanded);
                 }).finally(() => {
                     editorDiv.removeChild(loading);
                 });
@@ -302,5 +308,62 @@ export class Editor extends srceditor.Editor {
         return (
             <sui.Button text={lf("JavaScript") } textClass="ui landscape only" icon="keyboard" onClick={() => this.openTypeScript() } />
         )
+    }
+
+    sliceToolboxBlocks(content: string): void {
+        content = content.replace(/((?!.)\s)+/g, "\n");
+        let regex = /```(sim|blocks|shuffle)\n([\s\S]*?)\n```/gmi;
+        let match: RegExpExecArray;
+        let allblocks = "";
+        while ((match = regex.exec(content)) != null) {
+            let blocks = match[2];
+            allblocks += blocks + "\n";
+            this.slicedToolbox = true;
+        }
+        if (this.slicedToolbox) {
+            let promise = new Promise((resolve, reject) => {
+                pxt.runner.initCallbacks.push(
+                    function () {
+                        pxt.runner.decompileToBlocksAsync(allblocks, {})
+                            .then((r) => {
+                                let blocksxml: string = r.compileBlocks.outfiles['main.blocks'];
+                                let toolboxSubset: { [index: string]: number } = {};
+                                if (blocksxml) {
+                                    let headless = pxt.blocks.loadWorkspaceXml(blocksxml);
+                                    let allblocks = headless.getAllBlocks();
+                                    for (let bi = 0; bi < allblocks.length; ++bi) {
+                                        let blk = allblocks[bi];
+                                        toolboxSubset[blk.type] = 1;
+                                    }
+                                }
+                                resolve(toolboxSubset);
+                            });
+                    }
+                )
+            })
+            pxt.runner.init();
+            this.isToolboxExpanded = false;
+            this.parent.setToolboxState(this.isToolboxExpanded);
+            let editor = this;
+            promise.done((toolboxSubset: { [index: string]: number }) => {
+                pxt.blocks.initCallbacks.push(
+                    function (workspace?: Blockly.Workspace, tb?: Element) {
+                        if (!workspace || !tb) return;
+                        editor.cachedToolbox = tb;
+                        editor.toolboxSubset = toolboxSubset;
+                        pxt.blocks.updateToolbox(workspace, tb, toolboxSubset, editor.isToolboxExpanded);
+                    });
+                });
+        }
+    }
+
+    setToolboxExpanded(expanded: boolean) {
+        this.isToolboxExpanded = expanded;
+        pxt.blocks.updateToolbox(this.editor, this.cachedToolbox, this.toolboxSubset, this.isToolboxExpanded);
+    }
+    
+    toggleToolbox() {
+        this.setToolboxExpanded(!this.isToolboxExpanded);
+        this.parent.setToolboxState(this.isToolboxExpanded);
     }
 }

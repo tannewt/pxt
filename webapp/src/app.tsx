@@ -1,6 +1,5 @@
 /// <reference path="../../built/pxtpackage.d.ts"/>
 /// <reference path="../../built/pxtlib.d.ts"/>
-/// <reference path="../../built/pxtrunner.d.ts" />
 /// <reference path="../../built/pxtblocks.d.ts"/>
 /// <reference path="../../built/pxtsim.d.ts"/>
 
@@ -59,6 +58,8 @@ interface IAppState {
     helpCard?: pxt.CodeCard;
     helpCardClick?: (e: React.MouseEvent) => boolean;
     sideDocsCollapsed?: boolean;
+    toolboxToggle?: boolean;
+    toolboxExpanded?: boolean;
 
     running?: boolean;
     publishing?: boolean;
@@ -767,6 +768,7 @@ export class ProjectView extends data.Component<IAppProps, IAppState> {
         this.setState({
             currFile: fn,
             helpCard: undefined,
+            toolboxToggle: false,
             showBlocks: false
         })
         Blockly.fireUiEvent(window, 'resize');
@@ -841,6 +843,7 @@ export class ProjectView extends data.Component<IAppProps, IAppState> {
         logs.clear();
         this.setState({
             helpCard: undefined,
+            toolboxToggle: false,
             showFiles: false
         })
         return pkg.loadPkgAsync(h.id)
@@ -897,54 +900,15 @@ export class ProjectView extends data.Component<IAppProps, IAppState> {
 
                 let readme = main.lookupFile("this/README.md");
                 if (readme && readme.content && readme.content.trim()) {
-                    this.restrictToolbox(readme.content);
+                    this.editor.sliceToolboxBlocks(readme.content);
                     this.setSideMarkdown(readme.content);
                 }
                 else this.setSideDoc(pxt.appTarget.appTheme.sideDoc);
             })
     }
 
-    restrictToolbox(content: string): void {
-        content = content.replace(/((?!.)\s)+/g, "\n");
-        let regex = /```(sim|blocks|shuffle)\n([\s\S]*?)\n```/gmi;
-        let match: RegExpExecArray;
-        let found = false;
-        let allblocks = "";
-        while ((match = regex.exec(content)) != null) {
-            let blocks = match[2];
-            allblocks += blocks + "\n";
-            found = true;
-        }
-        let promise = new Promise((resolve, reject) => {
-            pxt.runner.initCallbacks.push(
-                function () {
-                    pxt.runner.decompileToBlocksAsync(allblocks, {})
-                        .then((r) => {
-                            let blocksxml: string = r.compileBlocks.outfiles['main.blocks'];
-                            let allBlockTypes: { [index: string]: number } = {};
-                            if (blocksxml) {
-                                let headless = pxt.blocks.loadWorkspaceXml(blocksxml);
-                                let allblocks = headless.getAllBlocks();
-                                for (let bi = 0; bi < allblocks.length; ++bi) {
-                                    let blk = allblocks[bi];
-                                    allBlockTypes[blk.type] = 1;
-                                }
-                            }
-                            resolve(allBlockTypes);
-                        });
-                }
-            )
-        })
-        if (found) {
-            pxt.runner.init();
-            promise.done((allBlockTypes: { [index: string]: number }) => {
-                pxt.blocks.initCallbacks.push(
-                    function (workspace?: Blockly.Workspace, tb?: Element) {
-                        if (!workspace || !tb) return;
-                        pxt.blocks.restrictToolbox(workspace, tb, allBlockTypes);
-                    });
-                });
-        }
+    toggleToolbox() {
+        this.editor.toggleToolbox();
     }
 
     removeProject() {
@@ -1267,6 +1231,13 @@ export class ProjectView extends data.Component<IAppProps, IAppState> {
         this.setState({
             helpCard: card,
             helpCardClick: onClick
+        })
+    }
+
+    setToolboxState(expanded: boolean) {
+        this.setState({
+            toolboxToggle: true,
+            toolboxExpanded: expanded
         })
     }
 

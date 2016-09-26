@@ -71,4 +71,7 @@ export class Editor {
     beforeCompile() { }
 
     highlightStatement(brk: pxtc.LocationInfo) { }
+
+    sliceToolboxBlocks(content: string) { }
+    toggleToolbox() { }
 }

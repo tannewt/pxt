@@ -123,6 +123,8 @@ namespace pxt.blocks {
                     let attr = attrNames[pr.name];
                     block.appendChild(createShadowValue(attr.name, attr.type, attr.shadowValue, attr.shadowType));
                 })
+        if (fn.attributes.sticky)
+            block.setAttribute("sticky", "true")
         return block;
     }
 
@@ -342,7 +344,7 @@ namespace pxt.blocks {
             e.parentElement.removeChild(e);
     }
     export var initCallbacks: ((workspace?: Blockly.Workspace, toolbox?: Element) => void)[] = [];
-    export function initBlocks(blockInfo: pxtc.BlocksInfo, workspace?: Blockly.Workspace, toolbox?: Element): void {
+    export function initBlocks(blockInfo: pxtc.BlocksInfo, workspace?: Blockly.Workspace, toolbox?: Element, expandFirstCategory: boolean = false): void {
         init();
 
         // create new toolbox and update block definitions
@@ -444,6 +446,9 @@ namespace pxt.blocks {
                 if (b) shadow.innerHTML = b.innerHTML;
             })
 
+            if (expandFirstCategory)
+                tb.firstElementChild.setAttribute("expanded", "true")
+
             // update toolbox   
             if (tb.innerHTML != cachedToolbox && workspace) {
                 cachedToolbox = tb.innerHTML;
@@ -456,9 +461,12 @@ namespace pxt.blocks {
         }
     }
 
-    export function restrictToolbox(workspace: Blockly.Workspace, tb: Element, allBlockTypes: { [index: string]: number }): void {
-        console.log(allBlockTypes);
-        console.log(tb);
+    export function updateToolbox(workspace: Blockly.Workspace, toolbox: Element, blockSubset: { [index: string]: number }, reset: boolean = false): void {
+        if (reset) {
+            workspace.updateToolbox(toolbox);
+            return;
+        }
+        let tb = <Element>toolbox.cloneNode(true);
         let keepcategories: { [index: string]: number } = {};
         let categories = tb.querySelectorAll("category");
         let blocks = tb.querySelectorAll("block");
@@ -466,7 +474,8 @@ namespace pxt.blocks {
             let blk = blocks.item(bi);
             let type = blk.getAttribute("type");
             let catName = blk.parentElement.getAttribute("name");
-            if (!allBlockTypes[type]) {
+            let sticky = blk.getAttribute("sticky");
+            if (!blockSubset[type] && !sticky) {
                 blk.parentNode.removeChild(blk);
             } else {
                 keepcategories[catName] = 1;
@@ -475,16 +484,13 @@ namespace pxt.blocks {
                 }
             }
         }
-        console.log(keepcategories);
         for (let ci = 0; ci < categories.length; ++ci) {
             let cat = categories.item(ci);
             let catName = cat.getAttribute("name");
             if (!keepcategories[catName]) {
                 cat.parentNode.removeChild(cat);
-                //cat.setAttribute("style","display: none");
             }
         }
-        console.log(tb);
         workspace.updateToolbox(tb);
     }
 

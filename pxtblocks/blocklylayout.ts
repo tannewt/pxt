@@ -22,6 +22,64 @@ namespace pxt.blocks.layout {
         flow(blocks, ratio || 1.62);
     }
 
+    export function screenshot(ws: B.Workspace) {
+        let xml = toSvg(ws);
+        if (xml)
+            BrowserUtils.browserDownloadText(xml, lf("screenshot") + ".svg", "image/svg+xml svg");
+    }
+
+    export function toSvg(ws: B.Workspace): string {
+        if (!ws) return undefined;
+
+        const bbox = ws.svgBlockCanvas_.getBBox();
+        let sg = ws.svgBlockCanvas_.cloneNode(true) as SVGGElement;
+        if (!sg.childNodes[0])
+            return undefined;
+
+        sg.removeAttribute("width");
+        sg.removeAttribute("height");
+        sg.removeAttribute("transform");
+        const customCss = `
+.blocklyMainBackground {
+    stroke:none !important;
+}
+
+.blocklyTreeLabel, .blocklyText, .blocklyHtmlInput {
+    font-family:'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', 'source-code-pro', monospace !important;   
+}
+
+.blocklyText {    
+    font-size:1rem !important;
+}
+
+.rtl .blocklyText {
+    text-align:right;
+}
+
+.blocklyTreeLabel {
+    font-size:1.25rem !important;
+}
+
+.blocklyCheckbox {
+    fill: #ff3030 !important;
+    text-shadow: 0px 0px 6px #f00;
+    font-size: 17pt !important;
+}`;
+
+        let xsg = new DOMParser().parseFromString(
+`<svg version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="${bbox.x} ${bbox.y} ${bbox.width} ${bbox.height}">
+${new XMLSerializer().serializeToString(sg)}
+</svg>`, "image/svg+xml");
+
+        const cssLink = xsg.createElementNS("http://www.w3.org/1999/xhtml", "style");
+        // CSS may contain <, > which need to be stored in CDATA section
+        cssLink.appendChild(xsg.createCDATASection((Blockly as any).Css.CONTENT.join('') + '\n\n' + customCss + '\n\n'));
+        xsg.documentElement.insertBefore(cssLink, xsg.documentElement.firstElementChild);
+
+        let xml = new XMLSerializer().serializeToString(xsg);
+        return xml;
+    }
+
     function flow(blocks: Blockly.Block[], ratio: number) {
         const gap = 14;
         // compute total block surface and infer width

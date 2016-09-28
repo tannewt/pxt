@@ -76,6 +76,9 @@ body {
 #logo img, #rightlogo img {
     height: 2.5rem;    
 }
+#rightlogo {
+    line-height: 1;
+}
 #monacoEditor {
     direction:ltr;
 }
@@ -253,6 +256,11 @@ div.simframe > iframe {
 }
 
 /* blockly */
+#blocksEditor {
+    right:0.25rem;
+    bottom:0.25rem;
+}
+
 #blocksEditor > div.loading {
     background:#fff;
     position: absolute;

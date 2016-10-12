@@ -5,6 +5,7 @@
 namespace pxt.docs {
     declare var require: any;
     let marked: MarkedStatic;
+    let hljs: any;
     import U = pxtc.Util;
     const lf = U.lf;
 
@@ -78,6 +79,12 @@ namespace pxt.docs {
         if (typeof marked !== "undefined") return marked;
         if (typeof require === "undefined") return undefined;
         return require("marked");
+    }
+
+    export var requireHighlightJs = () => {
+        if (typeof hljs !== "undefined") return hljs;
+        if (typeof require === "undefined") return undefined;
+        return require("highlight.js");
     }
 
     export interface RenderData {
@@ -249,7 +256,7 @@ namespace pxt.docs {
                 smartypants: true,
                 highlight: function (code, lang) {
                     try {
-                        let hljs = require('highlight.js');
+                        let hljs = requireHighlightJs();
                         if (!hljs) return code;
                         return hljs.highlightAuto(code, [lang.replace('-ignore', '')]).value;
                     }

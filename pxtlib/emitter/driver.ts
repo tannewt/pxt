@@ -89,8 +89,8 @@ namespace ts.pxtc {
         //sort parts (so breadboarding layout is stable w.r.t. code ordering)
         parts.sort();
         parts = parts.reverse(); //not strictly necessary, but it's a little
-                                 // nicer for demos to have "ledmatrix"
-                                 // before "buttonpair"
+        // nicer for demos to have "ledmatrix"
+        // before "buttonpair"
 
         return parts;
     }
@@ -184,12 +184,17 @@ namespace ts.pxtc {
             times: {},
         }
 
-        let fileText = opts.fileSystem
+        let fileText: { [index: string]: string } = {};
+        for (let fileName in opts.fileSystem) {
+            fileText[normalizePath(fileName)] = opts.fileSystem[fileName];
+        }
+
         let setParentNodes = true
         let options = getTsCompilerOptions(opts)
 
         let host: CompilerHost = {
             getSourceFile: (fn, v, err) => {
+                fn = normalizePath(fn)
                 let text = ""
                 if (fileText.hasOwnProperty(fn)) {
                     text = fileText[fn]
@@ -198,7 +203,10 @@ namespace ts.pxtc {
                 }
                 return createSourceFile(fn, text, v, setParentNodes)
             },
-            fileExists: fn => fileText.hasOwnProperty(fn),
+            fileExists: fn => {
+                fn = normalizePath(fn)
+                return fileText.hasOwnProperty(fn)
+            },
             getCanonicalFileName: fn => fn,
             getDefaultLibFileName: () => "no-default-lib.d.ts",
             writeFile: (fileName, data, writeByteOrderMark, onError) => {
@@ -207,7 +215,10 @@ namespace ts.pxtc {
             getCurrentDirectory: () => ".",
             useCaseSensitiveFileNames: () => true,
             getNewLine: () => "\n",
-            readFile: fn => fileText[fn] || "",
+            readFile: fn => {
+                fn = normalizePath(fn)
+                return fileText[fn] || "";
+            },
             directoryExists: dn => true,
         }
 
@@ -219,7 +230,13 @@ namespace ts.pxtc {
 
         // First get and report any syntactic errors.
         res.diagnostics = patchUpDiagnostics(program.getSyntacticDiagnostics());
-        if (res.diagnostics.length > 0) return res;
+        if (res.diagnostics.length > 0) {
+            if (opts.forceEmit) {
+                pxt.debug('syntactic errors, forcing emit')
+                compileBinary(program, host, opts, res);
+            }
+            return res;
+        }
 
         // If we didn't have any syntactic errors, then also try getting the global and
         // semantic errors.
@@ -236,7 +253,7 @@ namespace ts.pxtc {
             res.ast = program
         }
 
-        if (opts.ast || res.diagnostics.length == 0) {
+        if (opts.ast || opts.forceEmit || res.diagnostics.length == 0) {
             const binOutput = compileBinary(program, host, opts, res);
             res.times["compilebinary"] = Date.now() - emitStart
             res.diagnostics = patchUpDiagnostics(binOutput.diagnostics)
@@ -262,5 +279,9 @@ namespace ts.pxtc {
         let blocksInfo = pxtc.getBlocksInfo(apis);
         let bresp = pxtc.decompiler.decompileToBlocks(blocksInfo, file)
         return bresp;
+    }
+
+    function normalizePath(path: string): string {
+        return path.replace(/\\/g, "/")
     }
 }

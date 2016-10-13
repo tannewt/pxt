@@ -26,7 +26,7 @@ function loadText(filename) {
 
 task('default', ['updatestrings', 'built/pxt.js', 'built/pxt.d.ts', 'built/pxtrunner.js', 'built/backendutils.js', 'wapp', 'monaco-editor'], { parallelLimit: 10 })
 
-task('test', ['default', 'testfmt', 'testerr', 'testlang', 'testdecompiler'])
+task('test', ['default', 'testfmt', 'testerr', 'testlang', 'testdecompiler', 'testdecompilererrors'])
 
 task('clean', function () {
     expand(["built"]).forEach(f => {
@@ -53,6 +53,10 @@ task('testlang', ['built/pxt.js'], { async: true }, function () {
 
 task('testdecompiler', ['built/pxt.js'], { async: true }, function () {
     cmdIn(this, "tests/decompile-test", 'node ../../built/pxt.js testdecompiler .')
+})
+
+task('testdecompilererrors', ['built/pxt.js'], { async: true }, function () {
+    cmdIn(this, "tests/decompile-test/errors", 'node ../../../built/pxt.js testdecompilererrors .')
 })
 
 ju.catFiles('built/pxt.js', [
@@ -86,10 +90,10 @@ file('built/pxt-common.json', expand(['libs/pxt-common'], ".ts"), function () {
     fs.writeFileSync(this.name, JSON.stringify(std, null, 4))
 })
 
-file('built/blockly.d.ts', [], function() { ju.cpR('localtypings/blockly.d.ts', 'built/blockly.d.ts') })
-file('built/pxtparts.d.ts', [], function() { ju.cpR('localtypings/pxtparts.d.ts', 'built/pxtparts.d.ts') })
-file('built/pxtarget.d.ts', ['built/pxtpackage.d.ts', 'built/pxtparts.d.ts'], function() { ju.cpR('localtypings/pxtarget.d.ts', 'built/pxtarget.d.ts') })
-file('built/pxtpackage.d.ts', [], function() { ju.cpR('localtypings/pxtpackage.d.ts', 'built/pxtpackage.d.ts') })
+file('built/blockly.d.ts', ['localtypings/blockly.d.ts'], function() { ju.cpR('localtypings/blockly.d.ts', 'built/blockly.d.ts') })
+file('built/pxtparts.d.ts', ['localtypings/pxtparts.d.ts'], function() { ju.cpR('localtypings/pxtparts.d.ts', 'built/pxtparts.d.ts') })
+file('built/pxtarget.d.ts', ['built/pxtpackage.d.ts', 'built/pxtparts.d.ts', 'localtypings/pxtarget.d.ts'], function() { ju.cpR('localtypings/pxtarget.d.ts', 'built/pxtarget.d.ts') })
+file('built/pxtpackage.d.ts', ['localtypings/pxtpackage.d.ts'], function() { ju.cpR('localtypings/pxtpackage.d.ts', 'built/pxtpackage.d.ts') })
 
 compileDir("pxtlib", ["built/pxtarget.d.ts", "built/pxtparts.d.ts", "built/pxtpackage.d.ts", "built/typescriptServices.d.ts"])
 compileDir("pxtblocks", ["built/pxtlib.js", "built/blockly.d.ts"])
@@ -255,6 +259,30 @@ task('monaco-editor', [
     "built/web/vs/editor/editor.main.js",
     "built/web/vs/language/typescript/src/mode.js"
 ])
+
+
+task('serve', ['default'], {async: true}, function() {
+    let cmdArg = '';
+    if (process.env.sourceMaps === 'true') {
+        cmdArg = '-include-source-maps'
+    }
+    else if (process.env.noBrowser === 'true') {
+        cmdArg = '-no-browser'
+    }
+    else if (process.env.localYotta === 'true') {
+        cmdArg = '-yt'
+    }
+    else if (process.env.cloud === 'true') {
+        cmdArg = '-cloud'
+    }
+    else if (process.env.justServe === 'true') {
+        cmdArg = '-just'
+    }
+    else if (process.env.packaged === 'true') {
+        cmdArg = '-pkg'
+    }
+    cmdIn(this, '../pxt-microbit', 'node ../pxt/built/pxt.js serve ' + cmdArg)
+})
 
 file('built/web/vs/editor/editor.main.js', ['node_modules/pxt-monaco-typescript/release/src/monaco.contribution.js'], function () {
     console.log(`Updating the monaco editor bits`)

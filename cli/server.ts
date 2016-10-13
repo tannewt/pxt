@@ -13,11 +13,13 @@ import * as util from 'util';
 import U = pxt.Util;
 import Cloud = pxt.Cloud;
 
+const userProjectsDirName = "projects";
+
 let root = ""
 let dirs = [""]
 let simdirs = [""]
 let docfilesdirs = [""]
-let fileDir = process.cwd()
+let userProjectsDir = path.join(process.cwd(), userProjectsDirName);
 let docsDir = ""
 let tempDir = ""
 let packagedDir = ""
@@ -55,6 +57,38 @@ function setupRootDir() {
     tempDir = path.join(root, "built/docstmp")
     packagedDir = path.join(root, "built/packaged")
     setupDocfilesdirs()
+    setupProjectsDir()
+}
+
+function setupProjectsDir() {
+    if (serveOptions && serveOptions.electron) {
+        let projectsRootDir = process.cwd();
+
+        if (/^win/.test(os.platform())) {
+            // Use registry to query path of My Documents folder
+            let regQueryResult = "";
+
+            try {
+                let regQueryResult = child_process.execSync("reg query \"HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders\" /v Personal").toString();
+                let documentsPath = /personal(?:\s+\w+)\s+(.*)/gmi.exec(regQueryResult)[1];
+
+                if (documentsPath) {
+                    projectsRootDir = documentsPath;
+                } else {
+                    projectsRootDir = os.homedir();
+                }
+            } catch (e) {
+                // Fallback to Home directory
+                projectsRootDir = os.homedir();
+            }
+        } else {
+            projectsRootDir = os.homedir();
+        }
+
+        userProjectsDir = path.join(projectsRootDir, userProjectsDirName, pxt.appTarget.appTheme.id);
+    }
+
+    nodeutil.mkdirP(userProjectsDir);
 }
 
 let statAsync = Promise.promisify(fs.stat)
@@ -98,11 +132,11 @@ type FsFile = pxt.FsFile;
 type FsPkg = pxt.FsPkg;
 
 function readPkgAsync(logicalDirname: string, fileContents = false): Promise<FsPkg> {
-    let dirname = path.join(fileDir, logicalDirname)
-    return readFileAsync(path.join(dirname, pxt.configName))
+    let dirname = path.join(userProjectsDir, logicalDirname)
+    return readFileAsync(path.join(dirname, pxt.CONFIG_NAME))
         .then(buf => {
             let cfg: pxt.PackageConfig = JSON.parse(buf.toString("utf8"))
-            let files = [pxt.configName].concat(cfg.files || []).concat(cfg.testFiles || [])
+            let files = [pxt.CONFIG_NAME].concat(cfg.files || []).concat(cfg.testFiles || [])
             return Promise.map(files, fn =>
                 statOptAsync(path.join(dirname, fn))
                     .then<FsFile>(st => {
@@ -130,14 +164,14 @@ function readPkgAsync(logicalDirname: string, fileContents = false): Promise<FsP
 }
 
 function writePkgAsync(logicalDirname: string, data: FsPkg) {
-    let dirname = path.join(fileDir, logicalDirname)
+    let dirname = path.join(userProjectsDir, logicalDirname)
 
     nodeutil.mkdirP(dirname)
 
     return Promise.map(data.files, f =>
         readFileAsync(path.join(dirname, f.name))
             .then(buf => {
-                if (f.name == pxt.configName) {
+                if (f.name == pxt.CONFIG_NAME) {
                     try {
                         let cfg: pxt.PackageConfig = JSON.parse(f.content)
                         if (!cfg.name) {
@@ -162,8 +196,8 @@ function writePkgAsync(logicalDirname: string, data: FsPkg) {
 
 function returnDirAsync(logicalDirname: string, depth: number): Promise<FsPkg[]> {
     logicalDirname = logicalDirname.replace(/^\//, "")
-    let dirname = path.join(fileDir, logicalDirname)
-    return existsAsync(path.join(dirname, pxt.configName))
+    let dirname = path.join(userProjectsDir, logicalDirname)
+    return existsAsync(path.join(dirname, pxt.CONFIG_NAME))
         .then(ispkg =>
             ispkg ? readPkgAsync(logicalDirname).then(r => [r], err => []) :
                 depth <= 1 ? [] :
@@ -188,7 +222,7 @@ function isAuthorizedLocalRequest(req: http.IncomingMessage): boolean {
 function handleApiAsync(req: http.IncomingMessage, res: http.ServerResponse, elts: string[]): Promise<any> {
     let opts: pxt.Map<string> = querystring.parse(url.parse(req.url).query)
     let innerPath = elts.slice(2).join("/").replace(/^\//, "")
-    let filename = path.resolve(path.join(fileDir, innerPath))
+    let filename = path.resolve(path.join(userProjectsDir, innerPath))
     let meth = req.method.toUpperCase()
     let cmd = meth + " " + elts[1]
 
@@ -218,7 +252,10 @@ function handleApiAsync(req: http.IncomingMessage, res: http.ServerResponse, elt
             .then(d => writePkgAsync(innerPath, d))
     else if (cmd == "POST deploy" && deployCoreAsync)
         return readJsonAsync()
-            .then(d => deployCoreAsync(d));
+            .then(d => deployCoreAsync(d))
+            .catch((e) => {
+                throwError(404, "Board not found");
+            });
     else throw throwError(400)
 }
 
@@ -492,13 +529,14 @@ export interface ServeOptions {
     localToken: string;
     autoStart: boolean;
     packaged?: boolean;
+    electron?: boolean;
 }
 
 let serveOptions: ServeOptions;
 export function serveAsync(options: ServeOptions) {
     serveOptions = options;
 
-    setupRootDir()
+    setupRootDir();
 
     nodeutil.mkdirP(tempDir)
 
@@ -558,8 +596,8 @@ export function serveAsync(options: ServeOptions) {
             return handleApiAsync(req, res, elts)
                 .then(sendJson, err => {
                     if (err.statusCode) {
-                        error(err.statusCode)
-                        console.log("Error " + err.statusCode)
+                        error(err.statusCode, err.message || "");
+                        console.log("Error " + err.statusCode);
                     }
                     else {
                         error(500)
@@ -596,7 +634,7 @@ export function serveAsync(options: ServeOptions) {
         }
 
         if (pathname == "/--docs") {
-            sendFile(path.join(publicDir,  'docs.html'));
+            sendFile(path.join(publicDir, 'docs.html'));
             return
         }
 

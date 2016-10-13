@@ -244,15 +244,15 @@ namespace pxt.blocks {
     }
 
     function getOrAddSubcategory(parent: Element, name: string, weight: number, colour?: string) {
-         const existing = parent.querySelector(`category[name="${name}"]`);
-         if (existing) {
-             return existing;
-         }
+        const existing = parent.querySelector(`category[name="${name}"]`);
+        if (existing) {
+            return existing;
+        }
 
-         const newCategory = createCategoryElement(name, weight, colour);
-         parent.appendChild(newCategory)
+        const newCategory = createCategoryElement(name, weight, colour);
+        parent.appendChild(newCategory)
 
-         return newCategory;
+        return newCategory;
     }
 
     function injectBlockDefinition(info: pxtc.BlocksInfo, fn: pxtc.SymbolInfo, attrNames: Map<BlockParameter>, blockXml: HTMLElement): boolean {
@@ -537,7 +537,7 @@ namespace pxt.blocks {
         }
     }
 
-    export function updateToolbox(workspace: Blockly.Workspace, toolbox: Element, blockSubset: { [index: string]: number }, reset: boolean = false): void {
+    export function filterToolbox(workspace: Blockly.Workspace, toolbox: Element, blockSubset: { [index: string]: number }, reset: boolean = false): void {
         if (reset) {
             workspace.updateToolbox(toolbox);
             return;
@@ -563,7 +563,7 @@ namespace pxt.blocks {
         for (let ci = 0; ci < categories.length; ++ci) {
             let cat = categories.item(ci);
             let catName = cat.getAttribute("name");
-            if (!keepcategories[catName]) {
+            if (!keepcategories[catName] && catName != advancedCategoryName) {
                 cat.parentNode.removeChild(cat);
             }
         }
@@ -941,13 +941,13 @@ namespace pxt.blocks {
                 enabled: topBlocks.length > 0,
                 callback: () => {
                     pxt.blocks.layout.screenshotAsync(this)
-                    .done((uri) => {
-                        if (pxt.BrowserUtils.isSafari())
-                            uri = uri.replace(/^data:image\/[^;]/, 'data:application/octet-stream');
-                        BrowserUtils.browserDownloadDataUri(
-                            uri,
-                            `${pxt.appTarget.nickname || pxt.appTarget.forkof || pxt.appTarget.id}-${lf("screenshot")}.png`);
-                    });
+                        .done((uri) => {
+                            if (pxt.BrowserUtils.isSafari())
+                                uri = uri.replace(/^data:image\/[^;]/, 'data:application/octet-stream');
+                            BrowserUtils.browserDownloadDataUri(
+                                uri,
+                                `${pxt.appTarget.nickname || pxt.appTarget.forkof || pxt.appTarget.id}-${lf("screenshot")}.png`);
+                        });
                 }
             };
             menuOptions.push(screenshotOption);
@@ -962,7 +962,7 @@ namespace pxt.blocks {
         // We override Blockly's category mouse event handler so that only one
         // category can be expanded at a time. Also prevent categories from toggling
         // once openend.
-        Blockly.Toolbox.TreeNode.prototype.onMouseDown = function(a: Event) {
+        Blockly.Toolbox.TreeNode.prototype.onMouseDown = function (a: Event) {
             const that = <Blockly.Toolbox.TreeNode>this;
 
             // Collapse the currently selected node and its parent nodes
@@ -988,7 +988,7 @@ namespace pxt.blocks {
                 }
             }
             else if (!that.isSelected()) {
-                 that.select();
+                that.select();
             }
 
             that.updateRow()
@@ -996,7 +996,7 @@ namespace pxt.blocks {
 
         // We also must override this handler to handle the case where no category is selected (e.g. clicking outside the toolbox)
         const oldSetSelectedItem = Blockly.Toolbox.TreeControl.prototype.setSelectedItem;
-        (<any>Blockly).Toolbox.TreeControl.prototype.setSelectedItem = function(a: Blockly.Toolbox.TreeNode) {
+        (<any>Blockly).Toolbox.TreeControl.prototype.setSelectedItem = function (a: Blockly.Toolbox.TreeNode) {
             const that = <Blockly.Toolbox.TreeControl>this;
 
             if (a === null) {

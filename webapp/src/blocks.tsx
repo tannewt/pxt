@@ -396,7 +396,7 @@ export class Editor extends srceditor.Editor {
                         if (!workspace || !tb) return;
                         editor.cachedToolbox = tb;
                         editor.toolboxSubset = toolboxSubset;
-                        pxt.blocks.updateToolbox(workspace, tb, toolboxSubset, editor.isToolboxExpanded);
+                        pxt.blocks.filterToolbox(workspace, tb, toolboxSubset, editor.isToolboxExpanded);
                     });
                 });
         }
@@ -404,7 +404,7 @@ export class Editor extends srceditor.Editor {
 
     setToolboxExpanded(expanded: boolean) {
         this.isToolboxExpanded = expanded;
-        pxt.blocks.updateToolbox(this.editor, this.cachedToolbox, this.toolboxSubset, this.isToolboxExpanded);
+        pxt.blocks.filterToolbox(this.editor, this.cachedToolbox, this.toolboxSubset, this.isToolboxExpanded);
     }
 
     toggleToolbox() {

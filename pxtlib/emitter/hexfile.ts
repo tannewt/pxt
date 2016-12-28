@@ -1,6 +1,192 @@
 namespace ts.pxtc {
 
+    // HEX file documentation at: https://en.wikipedia.org/wiki/Intel_HEX
+
+    /* From above:
+    This example shows a file that has four data records followed by an end-of-file record:
+
+:10010000214601360121470136007EFE09D2190140
+:100110002146017E17C20001FF5F16002148011928
+:10012000194E79234623965778239EDA3F01B2CAA7
+:100130003F0156702B5E712B722B732146013421C7
+:00000001FF
+
+        A record (line of text) consists of six fields (parts) that appear in order from left to right:
+        - Start code, one character, an ASCII colon ':'.
+        - Byte count, two hex digits, indicating the number of bytes (hex digit pairs) in the data field. 
+          The maximum byte count is 255 (0xFF). 16 (0x10) and 32 (0x20) are commonly used byte counts.
+        - Address, four hex digits, representing the 16-bit beginning memory address offset of the data. 
+          The physical address of the data is computed by adding this offset to a previously established 
+          base address, thus allowing memory addressing beyond the 64 kilobyte limit of 16-bit addresses. 
+          The base address, which defaults to zero, can be changed by various types of records. 
+          Base addresses and address offsets are always expressed as big endian values.
+        - Record type (see record types below), two hex digits, 00 to 05, defining the meaning of the data field.
+        - Data, a sequence of n bytes of data, represented by 2n hex digits. Some records omit this field (n equals zero). 
+          The meaning and interpretation of data bytes depends on the application.
+        - Checksum, two hex digits, a computed value that can be used to verify the record has no errors.
+
+    */
+
     export const vtableShift = 2;
+
+    export namespace UF2 {
+        export const startMagic = "UF2\x0AWQ]\x9E"
+        export const endMagic = "0o\xB1\x0A"
+
+        export const UF2_MAGIC_START0 = 0x0A324655; // "UF2\n"
+        export const UF2_MAGIC_START1 = 0x9E5D5157; // Randomly selected
+        export const UF2_MAGIC_END = 0x0AB16F30;    // Ditto
+
+        export interface Block {
+            flags: number;
+            targetAddr: number;
+            payloadSize: number;
+            blockNo: number;
+            numBlocks: number;
+            data: Uint8Array;
+        }
+
+        export function parseBlock(block: Uint8Array): Block {
+            let wordAt = (k: number) => {
+                return (block[k] + (block[k + 1] << 8) + (block[k + 2] << 16) + (block[k + 3] << 24)) >>> 0
+            }
+            if (!block || block.length != 512 ||
+                wordAt(0) != UF2_MAGIC_START0 || wordAt(4) != UF2_MAGIC_START1 ||
+                wordAt(block.length - 4) != UF2_MAGIC_END)
+                return null
+            return {
+                flags: wordAt(8),
+                targetAddr: wordAt(12),
+                payloadSize: wordAt(16),
+                blockNo: wordAt(20),
+                numBlocks: wordAt(24),
+                data: block.slice(32, 512 - 4)
+            }
+        }
+
+        export function toBin(blocks: Uint8Array): Uint8Array {
+            if (blocks.length < 512)
+                return null
+            let curraddr = -1
+            let appstartaddr = -1
+            let bufs: Uint8Array[] = []
+            for (let i = 0; i < blocks.length; ++i) {
+                let ptr = i * 512
+                let bl = parseBlock(blocks.slice(ptr, ptr + 512))
+                if (!bl) continue
+                if (curraddr == -1) {
+                    curraddr = bl.targetAddr
+                    appstartaddr = curraddr
+                }
+                let padding = bl.targetAddr - curraddr
+                if (padding < 0 || padding % 4 || padding > 1024 * 1024)
+                    continue
+                if (padding > 0)
+                    bufs.push(new Uint8Array(padding))
+                bufs.push(blocks.slice(ptr + 32, ptr + 32 + bl.payloadSize))
+                curraddr = bl.targetAddr + bl.payloadSize
+            }
+            let len = 0
+            for (let b of bufs) len += b.length
+            if (len == 0)
+                return null
+            let r = new Uint8Array(len)
+            let dst = 0
+            for (let b of bufs) {
+                for (let i = 0; i < b.length; ++i)
+                    r[dst++] = b[i]
+            }
+            return r
+        }
+
+        function setWord(block: Uint8Array, ptr: number, v: number) {
+            block[ptr] = (v & 0xff)
+            block[ptr + 1] = ((v >> 8) & 0xff)
+            block[ptr + 2] = ((v >> 16) & 0xff)
+            block[ptr + 3] = ((v >> 24) & 0xff)
+        }
+
+        export interface BlockFile {
+            currBlock: Uint8Array;
+            currPtr: number;
+            blocks: Uint8Array[];
+            ptrs: number[];
+        }
+
+        export function newBlockFile(): BlockFile {
+            return {
+                currBlock: null,
+                currPtr: -1,
+                blocks: [],
+                ptrs: []
+            }
+        }
+
+        export function serializeFile(f: BlockFile) {
+            for (let i = 0; i < f.blocks.length; ++i) {
+                setWord(f.blocks[i], 24, f.blocks.length)
+            }
+            let res = ""
+            for (let b of f.blocks)
+                res += Util.uint8ArrayToString(b)
+            return res
+        }
+
+        export function writeBytes(f: BlockFile, addr: number, bytes: number[]) {
+            let currBlock = f.currBlock
+            let needAddr = addr >> 8
+            if (needAddr != f.currPtr) {
+                let i = 0;
+                currBlock = null
+                for (let i = 0; i < f.ptrs.length; ++i) {
+                    if (f.ptrs[i] == needAddr) {
+                        currBlock = f.blocks[i]
+                        break
+                    }
+                }
+                if (!currBlock) {
+                    currBlock = new Uint8Array(512)
+                    setWord(currBlock, 0, UF2_MAGIC_START0)
+                    setWord(currBlock, 4, UF2_MAGIC_START1)
+                    setWord(currBlock, 12, needAddr << 8)
+                    setWord(currBlock, 16, 256)
+                    setWord(currBlock, 20, f.blocks.length)
+                    setWord(currBlock, 512 - 4, UF2_MAGIC_END)
+                    f.blocks.push(currBlock)
+                    f.ptrs.push(needAddr)
+                }
+                f.currPtr = needAddr
+                f.currBlock = currBlock
+            }
+            let p = (addr & 0xff) + 32
+            for (let i = 0; i < bytes.length; ++i)
+                currBlock[p + i] = bytes[i]
+        }
+
+        export function writeHex(f: BlockFile, hex: string[]) {
+            let upperAddr = "0000"
+
+            for (let i = 0; i < hex.length; ++i) {
+                let m = /:02000004(....)/.exec(hex[i])
+                if (m) {
+                    upperAddr = m[1]
+                }
+                m = /^:..(....)00(.*)[0-9A-F][0-9A-F]$/.exec(hex[i])
+                if (m) {
+                    let newAddr = parseInt(upperAddr + m[1], 16)
+                    let hh = m[2]
+                    let arr: number[] = []
+                    for (let j = 0; j < hh.length; j += 2) {
+                        arr.push(parseInt(hh[j] + hh[j + 1], 16))
+                    }
+                    writeBytes(f, newAddr, arr)
+                }
+            }
+
+        }
+    }
+
+
 
     // TODO should be internal
     export namespace hex {
@@ -14,8 +200,9 @@ namespace ts.pxtc {
         let bytecodeStartIdx: number;
         let asmLabels: Map<boolean> = {};
         export let asmTotalSource: string = "";
-        export const pageSize = 0x400;
+        export const defaultPageSize = 0x400;
 
+        // utility function
         function swapBytes(str: string) {
             let r = ""
             let i = 0
@@ -64,9 +251,28 @@ namespace ts.pxtc {
         }
 
         let currentSetup: string = null;
-        export let currentHexInfo: any;
+        export let currentHexInfo: pxtc.HexInfo;
 
-        export function setupFor(extInfo: ExtensionInfo, hexinfo: any) {
+        // setup for a particular .hex template file (which corresponds to the C++ source in included packages and the board)
+        export function flashCodeAlign(opts: CompileTarget) {
+            return opts.flashCodeAlign || defaultPageSize
+        }
+
+        // some hex files use '02' records instead of '04' record for addresses. go figure.
+        function patchSegmentHex(hex: string[]) {
+            for (let i = 0; i < hex.length; ++i) {
+                // :020000021000EC
+                if (hex[i][8] == '2') {
+                    let m = /^:02....02(....)..$/.exec(hex[i])
+                    U.assert(!!m)
+                    let upaddr = parseInt(m[1], 16) * 16
+                    U.assert((upaddr & 0xffff) == 0)
+                    hex[i] = hexBytes([0x02, 0x00, 0x00, 0x04, 0x00, upaddr >> 16])
+                }
+            }
+        }
+
+        export function setupFor(opts: CompileTarget, extInfo: ExtensionInfo, hexinfo: pxtc.HexInfo) {
             if (isSetupFor(extInfo))
                 return;
 
@@ -74,6 +280,8 @@ namespace ts.pxtc {
             currentHexInfo = hexinfo;
 
             hex = hexinfo.hex;
+
+            patchSegmentHex(hex)
 
             let i = 0;
             let upperAddr = "0000"
@@ -84,19 +292,34 @@ namespace ts.pxtc {
             let hitEnd = () => {
                 if (!bytecodeStartAddr) {
                     let bytes = parseHexBytes(hex[lastIdx])
-                    if (bytes[0] != 0x10) {
-                        bytes.pop() // checksum
-                        bytes[0] = 0x10;
-                        while (bytes.length < 20)
-                            bytes.push(0x00)
-                        hex[lastIdx] = hexBytes(bytes)
+                    let missing = (0x10 - ((lastAddr + bytes[0]) & 0xf)) & 0xf
+                    if (missing)
+                        if (bytes[2] & 0xf) {
+                            let next = lastAddr + bytes[0]
+                            let newline = [missing, next >> 8, next & 0xff, 0x00]
+                            for (let i = 0; i < missing; ++i)
+                                newline.push(0x00)
+                            lastIdx++
+                            hex.splice(lastIdx, 0, hexBytes(newline))
+                            bytecodeStartAddr = next + missing
+                        } else {
+                            if (bytes[0] != 0x10) {
+                                bytes.pop() // checksum
+                                bytes[0] = 0x10;
+                                while (bytes.length < 20)
+                                    bytes.push(0x00)
+                                hex[lastIdx] = hexBytes(bytes)
+                            }
+                            bytecodeStartAddr = lastAddr + 16
+                        }
+                    else {
+                        bytecodeStartAddr = lastAddr + bytes[0]
                     }
-                    assert((bytes[2] & 0xf) == 0)
 
-                    bytecodeStartAddr = lastAddr + 16
                     bytecodeStartIdx = lastIdx + 1
+                    const pageSize = flashCodeAlign(opts)
                     bytecodeStartAddrPadded = (bytecodeStartAddr & ~(pageSize - 1)) + pageSize
-                    let paddingBytes = bytecodeStartAddrPadded - bytecodeStartAddr
+                    const paddingBytes = bytecodeStartAddrPadded - bytecodeStartAddr
                     assert((paddingBytes & 0xf) == 0)
                     bytecodePaddingSize = paddingBytes
                 }
@@ -119,6 +342,8 @@ namespace ts.pxtc {
                 if (/^:00000001/.test(hex[i]))
                     hitEnd()
 
+                // random magic number, which marks the beginning of the array of function pointers in the .hex file
+                // it is defined in pxt-microbit-core
                 m = /^:10....000108010842424242010801083ED8E98D/.exec(hex[i])
                 if (m) {
                     jmpStartAddr = lastAddr
@@ -133,7 +358,7 @@ namespace ts.pxtc {
                 oops("No hex end")
 
             funcInfo = {};
-            let funs: FuncInfo[] = hexinfo.functions.concat(extInfo.functions);
+            let funs: FuncInfo[] = extInfo.functions;
 
             for (let i = jmpStartIdx + 1; i < hex.length; ++i) {
                 let m = /^:10(....)00(.{16})/.exec(hex[i])
@@ -141,30 +366,31 @@ namespace ts.pxtc {
                 if (!m) continue;
 
                 let s = hex[i].slice(9)
-                while (s.length >= 8) {
+                let step = opts.shortPointers ? 4 : 8
+                while (s.length >= step) {
                     let inf = funs.shift()
                     if (!inf) return;
                     funcInfo[inf.name] = inf;
-                    let hexb = s.slice(0, 8)
+                    let hexb = s.slice(0, step)
                     //console.log(inf.name, hexb)
-                    inf.value = parseInt(swapBytes(hexb), 16) & 0xfffffffe
+                    inf.value = parseInt(swapBytes(hexb), 16)
                     if (!inf.value) {
                         U.oops("No value for " + inf.name + " / " + hexb)
                     }
-                    s = s.slice(8)
+                    s = s.slice(step)
                 }
             }
 
             oops();
         }
 
-        export function validateShim(funname: string, attrs: CommentAttrs, hasRet: boolean, numArgs: number) {
-            if (attrs.shim == "TD_ID" || attrs.shim == "TD_NOOP")
+        export function validateShim(funname: string, shimName: string, hasRet: boolean, numArgs: number) {
+            if (shimName == "TD_ID" || shimName == "TD_NOOP")
                 return
-            if (U.lookup(asmLabels, attrs.shim))
+            if (U.lookup(asmLabels, shimName))
                 return
-            let nm = `${funname}(...) (shim=${attrs.shim})`
-            let inf = lookupFunc(attrs.shim)
+            let nm = `${funname}(...) (shim=${shimName})`
+            let inf = lookupFunc(shimName)
             if (inf) {
                 if (!hasRet) {
                     if (inf.type != "P")
@@ -210,10 +436,13 @@ namespace ts.pxtc {
             return r.toUpperCase();
         }
 
-        export function patchHex(bin: Binary, buf: number[], shortForm: boolean) {
+        export function patchHex(bin: Binary, buf: number[], shortForm: boolean, useuf2: boolean) {
             let myhex = hex.slice(0, bytecodeStartIdx)
 
             assert(buf.length < 32000)
+
+            // store the size of the program (in 16 bit words)
+            buf[17] = buf.length
 
             let zeros: number[] = []
             for (let i = 0; i < bytecodePaddingSize >> 1; ++i)
@@ -232,12 +461,20 @@ namespace ts.pxtc {
                 return bytes
             }
 
+            // 0x4209 is the version number matching pxt-microbit-core
             let hd = [0x4209, 0, bytecodeStartAddrPadded & 0xffff, bytecodeStartAddrPadded >>> 16]
             let tmp = hexTemplateHash()
             for (let i = 0; i < 4; ++i)
                 hd.push(parseInt(swapBytes(tmp.slice(i * 4, i * 4 + 4)), 16))
 
-            myhex[jmpStartIdx] = hexBytes(nextLine(hd, jmpStartAddr))
+            let uf2 = useuf2 ? UF2.newBlockFile() : null
+
+            if (uf2) {
+                UF2.writeHex(uf2, myhex)
+                UF2.writeBytes(uf2, jmpStartAddr, nextLine(hd, jmpStartIdx).slice(4))
+            } else {
+                myhex[jmpStartIdx] = hexBytes(nextLine(hd, jmpStartAddr))
+            }
 
             ptr = 0
 
@@ -246,22 +483,31 @@ namespace ts.pxtc {
             let addr = bytecodeStartAddr;
             let upper = (addr - 16) >> 16
             while (ptr < buf.length) {
-                if ((addr >> 16) != upper) {
-                    upper = addr >> 16
-                    myhex.push(hexBytes([0x02, 0x00, 0x00, 0x04, upper >> 8, upper & 0xff]))
+                if (uf2) {
+                    UF2.writeBytes(uf2, addr, nextLine(buf, addr).slice(4))
+                } else {
+                    if ((addr >> 16) != upper) {
+                        upper = addr >> 16
+                        myhex.push(hexBytes([0x02, 0x00, 0x00, 0x04, upper >> 8, upper & 0xff]))
+                    }
+                    myhex.push(hexBytes(nextLine(buf, addr)))
                 }
-
-                myhex.push(hexBytes(nextLine(buf, addr)))
                 addr += 16
             }
 
-            if (!shortForm)
-                hex.slice(bytecodeStartIdx).forEach(l => myhex.push(l))
+            if (!shortForm) {
+                let app = hex.slice(bytecodeStartIdx)
+                if (uf2)
+                    UF2.writeHex(uf2, app)
+                else
+                    Util.pushRange(myhex, app)
+            }
 
-            return myhex;
+            if (uf2)
+                return [UF2.serializeFile(uf2)]
+            else
+                return myhex;
         }
-
-
     }
 
     export function asmline(s: string) {
@@ -293,6 +539,7 @@ namespace ts.pxtc {
     function emitStrings(bin: Binary) {
         for (let s of Object.keys(bin.strings)) {
             let lbl = bin.strings[s]
+            // string representation of DAL - 0xffff in general for ref-counted objects means it's static and shouldn't be incr/decred
             bin.otherLiterals.push(`
 .balign 4
 ${lbl}meta: .short 0xffff, ${s.length}
@@ -340,16 +587,23 @@ ${info.id}_IfaceVT:
     }
 
 
-    function serialize(bin: Binary) {
+    function serialize(bin: Binary, opts: CompileOptions) {
         let asmsource = `; start
 ${hex.hexPrelude()}        
     .hex 708E3B92C615A841C49866C975EE5197 ; magic number
     .hex ${hex.hexTemplateHash()} ; hex template hash
     .hex 0000000000000000 ; @SRCHASH@
     .short ${bin.globalsWords}   ; num. globals
-    .space 14 ; reserved
+    .short 0 ; patched with number of words resulting from assembly
+    .word 0 ; reserved
+    .word 0 ; reserved
+    .word 0 ; reserved
 `
-        let snippets = new ThumbSnippets()
+        let snippets: AssemblerSnippets = null;
+        if (opts.target.nativeType == "AVR")
+            snippets = new AVRSnippets()
+        else
+            snippets = new ThumbSnippets()
         bin.procs.forEach(p => {
             let p2a = new ProctoAssembler(snippets, bin, p)
             asmsource += "\n" + p2a.getAssembly() + "\n"
@@ -378,11 +632,11 @@ ${hex.hexPrelude()}
         return src.replace(/\n.*@SRCHASH@\n/, "\n    .hex " + sha.slice(0, 16).toUpperCase() + " ; program hash\n")
     }
 
-    export function thumbInlineAssemble(src: string) {
-        let b = mkThumbFile()
+    export function processorInlineAssemble(nativeType: string, src: string) {
+        let b = mkProcessorFile(nativeType)
         b.disablePeepHole = true
         b.emit(src)
-        throwThumbErrors(b)
+        throwAssemblerErrors(b)
 
         let res: number[] = []
         for (let i = 0; i < b.buf.length; i += 2) {
@@ -391,11 +645,16 @@ ${hex.hexPrelude()}
         return res
     }
 
-    function mkThumbFile() {
-        let tp = new thumb.ThumbProcessor()
-        thumb.testThumb(tp); // just in case
+    function mkProcessorFile(nativeType: string) {
+        let processor: assembler.AbstractProcessor = null
+        if (nativeType == "AVR")
+            processor = new avr.AVRProcessor()
+        else
+            processor = new thumb.ThumbProcessor()
 
-        let b = new assembler.File(tp);
+        processor.testAssembler(); // just in case
+
+        let b = new assembler.File(processor);
         b.lookupExternalLabel = hex.lookupFunctionAddr;
         b.normalizeExternalLabel = s => {
             let inf = hex.lookupFunc(s)
@@ -407,7 +666,7 @@ ${hex.hexPrelude()}
         return b
     }
 
-    function throwThumbErrors(b: assembler.File) {
+    function throwAssemblerErrors(b: assembler.File) {
         if (b.errors.length > 0) {
             let userErrors = ""
             b.errors.forEach(e => {
@@ -433,13 +692,13 @@ ${hex.hexPrelude()}
     }
 
     let peepDbg = false
-    function assemble(bin: Binary, src: string) {
-        let b = mkThumbFile()
+    function assemble(nativeType: string, bin: Binary, src: string) {
+        let b = mkProcessorFile(nativeType)
         b.emit(src);
 
         src = b.getSource(!peepDbg);
 
-        throwThumbErrors(b)
+        throwAssemblerErrors(b)
 
         return {
             src: src,
@@ -483,18 +742,23 @@ _stored_program: .string "`
         return str
     }
 
-    export function thumbEmit(bin: Binary, opts: CompileOptions, cres: CompileResult) {
-        let src = serialize(bin)
+    export function processorEmit(bin: Binary, opts: CompileOptions, cres: CompileResult) {
+        let src = serialize(bin, opts)
         src = patchSrcHash(src)
         if (opts.embedBlob)
             src += addSource(opts.embedMeta, decodeBase64(opts.embedBlob))
         bin.writeFile(pxtc.BINARY_ASM, src)
-        let res = assemble(bin, src)
+        let res = assemble(opts.target.nativeType, bin, src)
         if (res.src)
             bin.writeFile(pxtc.BINARY_ASM, res.src)
         if (res.buf) {
-            const myhex = hex.patchHex(bin, res.buf, false).join("\r\n") + "\r\n"
-            bin.writeFile(pxtc.BINARY_HEX, myhex)
+            if (opts.target.useUF2) {
+                const myhex = btoa(hex.patchHex(bin, res.buf, false, true)[0])
+                bin.writeFile(pxtc.BINARY_UF2, myhex)
+            } else {
+                const myhex = hex.patchHex(bin, res.buf, false, false).join("\r\n") + "\r\n"
+                bin.writeFile(pxtc.BINARY_HEX, myhex)
+            }
             cres.quickFlash = {
                 startAddr: hex.bytecodeStartAddrPadded,
                 words: []
@@ -502,7 +766,7 @@ _stored_program: .string "`
             for (let i = 0; i < res.buf.length; i += 2) {
                 cres.quickFlash.words.push(res.buf[i] | (res.buf[i + 1] << 16))
             }
-            while (cres.quickFlash.words.length & ((hex.pageSize >> 2) - 1))
+            while (cres.quickFlash.words.length & ((hex.flashCodeAlign(opts.target) >> 2) - 1))
                 cres.quickFlash.words.push(0)
         }
 

@@ -14,178 +14,33 @@ body {
 }
 
 
-#filelist,
-#maineditor,
-#sidedocs {
-  position: absolute;
-  top:4.5rem;
-  bottom: 0rem;
-}
-#sidedocs {
-  display:none;
-  overflow-y: auto;
-  right: 0;
-  border:none;
-  height: calc(100% - 4.5rem);
-}
-.rtl #sidedocs {
-    right:auto;
-    left:0;
-}
-#sidedocspopout {
-  position: absolute;
-  top:4.75rem;
-  right:4.25rem;
-  display:none;
-}
-.rtl #sidedocspopout {
-    right:auto;
-    left:4.25rem;
-}
-
-#sidedocsexpand {
-  position: absolute;
-  top:4.75rem;
-  right:1.25rem;
-  display:none;
-}
-.rtl #sidedocsexpand {
-    right:auto;
-    left:1.25rem;
-}
-
-#logo {
+.ui.item.logo {
     font-size: 2.8rem;
     margin: 0;
     padding: 0 0.3rem;
-    /*font-weight: bold;
-    padding: 0 0.5em 0 0.5em;
-    color: #2185D0;
-    */
 }
-#logo .name {
+.ui.item.logo .name {
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, inherit;
     color: #666666;
     padding: 0 0.3rem;
 }
-#logo svg {
+.ui.item.logo svg {
     width: 1.2rem;
     height: 1.2rem;
 }
 
-#logo img, #rightlogo img {
-    height: 2.5rem;
-}
-#rightlogo {
-    line-height: 1;
-}
-#monacoEditor {
-    direction:ltr;
-}
-
-#cookiemsg {
-   position: absolute;
-   left: 1rem;
-   bottom: 0.5rem;
-   width: 18rem;
-   text-align: left;
-   display:none;
-   z-index:1000;
-}
-
-#cookiemsg > a {
-   color:white;
-   text-decoration: underline;
-}
-
-.organization {
-    position:absolute;
-    top:1rem;
-    right:1rem;
-    height:2rem;
-    z-index:100;
-}
-.rtl .organization {
-    right:auto;
-    left:1rem;
+.ui.item.logo img {
+    max-height: 2.5rem;
+    margin-left: 1rem;
+    margin-right: 1rem;
 }
 
 .rtl #fileNameInput {
     text-align: right;
 }
 
-div.simframe {
-    border:none;
-    margin:0 0 0.5rem 0;
-    position: relative;
-    background:transparent;
-    width:100%;
-    padding-bottom: 81.96%;
-}
-
-div.simframe > iframe {
-    position:absolute;
-    top:0; left: 0; width:100%; height:100%;
-}
-
-#filelist {
-  padding: 0em 1em 0em 0.5em;
-  overflow-x: hidden;
-  overflow-y: auto;
-  margin-top: 0;
-  margin-bottom: 0;
-}
-
-.filemenu {
-  direction:ltr;
-}
-
-#menubar {
-  position: absolute;
-  left: 0;
-  top: 0;
-  right: 0;
-  height: 4rem;
-}
-
-#menubar .item > .button {
-    margin-right: 0.25rem;
-}
-
-#filelist .menu {
-  width: 100%;
-}
-
-#filelist .nested.item {
-    padding-left: 4rem;
-}
-
-#filelist .header {
-    background: rgba(0,0,0,0.05);
-}
-
-#helpcard {
-    position: absolute;
-    right: 7rem;
-    bottom: 2.2rem;
-    margin: 0;
-    z-index: 5;
-}
-.rtl #helpcard {
-    left:7rem;
-    right:auto;
-}
-
 #settings .popup {
     width: 25rem;
-}
-
-.full-abs {
-    position: absolute !important;
-    left: 0;
-    top: 0;
-    bottom: 0;
-    right: 0;
 }
 
 #root.inverted {
@@ -253,99 +108,6 @@ div.simframe > iframe {
 
 .rtl .ui.menu .ui.dropdown .menu > .item .icon:not(.dropdown) {
     margin: 0.0em 0.0em 0.0em 0.75em
-}
-
-/* blockly */
-#blocksEditor {
-    right:0.25rem;
-    bottom:0.25rem;
-}
-
-#blocksEditor > div.loading {
-    background:#fff;
-    position: absolute;
-    left: 0;
-    top: 0;
-    right: 0;
-    bottom: 0;
-    z-index: 1;
-    opacity: 0.7;
-}
-
-.blocklyToolboxDiv {
-    background: rgba(0, 0, 0, 0.05);
-}
-
-.blocklyMainBackground {
-    stroke:none !important;
-}
-
-.blocklyTreeLabel, .blocklyText, .blocklyHtmlInput {
-    font-family:'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', 'source-code-pro', monospace !important;
-}
-
-.blocklyText {
-    font-size:1rem !important;
-}
-
-.rtl .blocklyText {
-    text-align:right;
-}
-
-.blocklyTreeLabel {
-    font-size:1.25rem !important;
-}
-
-/* This horrendous selector and the next are for subcategories in the Blockly toolbox */
-.blocklyTreeRoot div div div div .blocklyTreeRow {
-    border-left-width: 12px !important;
-    padding-left: 0px !important;
-}
-
-.blocklyTreeRoot div div div div .blocklyTreeRow .blocklyTreeLabel {
-    font-size: 1rem !important;
-}
-
-/* This prevents the arrow icon from showing for categories that have subcategories in the toolbox */
-.blocklyTreeIcon {
-    opacity: 0 !important;
-}
-
-.blocklyTreeSelected {
-    border-radius: 5px !important;
-}
-
-.blocklyCheckbox {
-    fill: #ff3030 !important;
-    text-shadow: 0px 0px 6px #f00;
-    font-size: 17pt !important;
-}
-
-.blocklyPreview {
- position: absolute;
- top: 50%;
- left: 50%;
- transform: translate(-50%,-50%);
- width: calc(100% - 1em);
- max-height: calc(100% - 1em);
-}
-
-body.blocklyMinimalBody {
-    min-width: initial;
-}
-
-@supports (-ms-accelerator:true) {
-    .rtl .blocklyPreview {
-        right:50%;
-        left:auto;
-    }
-}
-@media all and (-ms-high-contrast: none), (-ms-high-contrast: active), (-ms-accelerator:true) {
-     /* IE10+, Edge CSS styles go here */
-    .rtl .blocklyPreview {
-        right:50%;
-        left:auto;
-    }
 }
 
 .modal img.ui.logo {
@@ -497,35 +259,6 @@ html {
     margin-top:0.5em !important;
 }
 
-/* default layout */
-#filelist {
-  left: 0;
-  min-width: 27rem;
-  max-width: 27rem;
-}
-.rtl #filelist {
-    left: auto;
-    right: 0;
-}
-
-.rtl #cookiemsg {
-    left:auto;
-    right:1rem;
-}
-
-#maineditor {
-  right: 0;
-  left: 27rem;
-}
-.rtl #maineditor {
-    left:0;
-    right:27rem;
-}
-
-.ui.widedesktop.only {
-    display:none !important;
-}
-
 .flash {
     animation: flash-animation 0.4s alternate infinite;
 }
@@ -544,196 +277,6 @@ html {
     to   { opacity: 0.8; }
 }
 
-/* extra-large desktop screen */
-@media only screen and (min-width: 92em) and (min-height:44em) {
-    .ui.widedesktop.only {
-        display:block !important;
-    }
-    .ui.widedesktop.hide {
-        display:none !important;
-    }
-    .sideDocs #maineditor {
-        right:22rem;
-    }
-    .rtl .sideDocs #maineditor {
-        left:22rem;
-        right:23rem;
-    }
-    .sideDocs #sidedocs {
-        display:block;
-        width:22rem;
-    }
-    #sidedocspopout, #sidedocsexpand {
-        display:block;
-    }
-}
-
-@media only screen and (min-width: 55em) and (min-height:44em) {
-    .blocklyTreeRow {
-        padding-top: 0.75rem !important;
-        padding-bottom: 2rem !important;
-        border-left-width: 12px !important;
-    }
-    .blocklyTreeRoot div div div div .blocklyTreeRow {
-        border-left-width: 18px !important;
-        padding-top: 0px !important;
-        padding-bottom: 1.6rem !important;
-    }
-}
-
-@media only screen and (max-width: 64em), only screen and (max-aspect-ratio: 14/10) {
-    .organization {
-        right:auto;
-        top:auto;
-        left:1.5rem;
-        bottom:0.5rem;
-    }
-    .rtl .organization {
-        left:1.5rem;
-        right:auto;
-    }
-    #cookiemsg {
-        bottom:2.5rem;
-    }
-    #filelist {
-        bottom:3rem;
-        min-width:20rem;
-        max-width:20rem;
-    }
-    #maineditor {
-        left:20rem;
-    }
-    .rtl #maineditor {
-        right:20rem;
-        left:0;
-    }
-}
-
-/* smaller desktop screen */
-@media only screen and (max-width: 60em), only screen and (max-aspect-ratio: 12/10) {
-    #logo .name {
-        display: none !important;
-    }
-    .ui.desktop.only {
-        display:none !important;
-    }
-    #helpcard {
-        top: auto;
-        bottom: 2.2rem;
-        margin: 0;
-    }
-    .blocklyTreeLabel {
-        font-size:1rem;
-    }
-}
-
-/* thin desktop portrait mode */
-@media only screen and (max-width: 55em), only screen and (max-aspect-ratio: 7/10) {
-    #helpcard {
-        top: auto;
-        bottom: 2rem;
-        margin: 0;
-    }
-    .organization {
-        top:auto;
-        left:0.5rem;
-        right: auto;
-        bottom: 0.5rem;
-        height: 1.3rem;
-    }
-    .rtl .organization {
-        left:0.5rem;
-        right: auto;
-    }
-    #maineditor, .rtl #maineditor {
-        left: 0;
-        right:0;
-    }
-    #maineditor:not(.sandbox), .rtl #maineditor:not(.sandbox) {
-        bottom:2rem;
-    }
-    .ui.landscape.only {
-        display:none !important;
-    }
-    .hideEditorFloats .editorFloat {
-        display:none;
-    }
-    #filelist {
-        position:absolute;
-        z-index:5;
-        bottom:3rem;
-        left:1rem;
-        top:auto;
-        width:auto;
-        min-width: inherit;
-        max-width: inherit;
-    }
-    .rtl #filelist {
-        left:auto;
-        right:1rem;
-    }
-    div.simframe {
-        display:inline-block;
-        width: 18rem;
-        margin-right:0.5rem;
-    }
-    div.simframe:not(:first-child) {
-        display:none !important;
-    }
-    .blocklyTreeLabel {
-        font-size:1rem;
-    }
-}
-
-@media only screen and (min-width: 55em) {
-    .ui.portrait.only {
-        display:none !important;
-    }
-}
-
-@media only screen and (max-height:42.5em) {
-    .ui.tall.only {
-        display:none !important;
-    }
-}
-
-/* thin display, mobile */
-@media only screen and (min-width:36em) {
-    .ui.thin.only {
-        display:none !important;
-    }
-}
-
-@media only screen and (max-width:36em) {
-    .ui.wide.only {
-        display:none !important;
-    }
-}
-
-@media only screen and (max-width:50em) {
-    #logo {
-        font-size: 0rem;
-        padding-right: 0;
-    }
-    .blocklyTreeLabel, .blocklyText {
-        font-size: 0.75rem !important;
-    }
-    .blocklyTreeRoot div div div div .blocklyTreeRow .blocklyTreeLabel {
-        font-size: 0.75rem !important;
-    }
-    div.simframe {
-        display:inline-block;
-        width: 10rem;
-        margin-right:0.5rem;
-    }
-    div.simframe:not(:first-child) {
-        display:none !important;
-    }
-    div.simframe iframe.grayscale {
-        display:none !important;
-    }
-}
-
 .ui.fluid.button.half{
     width:50% !important;
 }
@@ -741,76 +284,114 @@ html {
     width:60% !important;
 }
 
-/* monaco: Editor */
+/*******************************
+    Blockly
+    Add Blockly CSS here that you don't want overriden in themes
+*******************************/
 
-.monaco-editor .current-line {
-	background: rgba(0, 0, 255, 0.1);
+#blocksEditor {
+    position: absolute;
 }
 
-/* monaco: Error View Zone */
+#blocksEditor > div.loading {
+    background:#fff;
+    position: absolute;
+    left: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 1;
+    opacity: 0.7;
+}
 
+.blocklyMainBackground {
+    stroke:none !important;
+}
+
+.rtl .blocklyText {
+    text-align:right;
+}
+
+/* This prevents the arrow icon from showing for categories that have subcategories in the toolbox */
+.blocklyTreeIcon {
+    opacity: 0 !important;
+}
+
+/* This is to ensure the leds inside showLeds fill the entire checkbox */
+.blocklyCheckbox {
+    fill: #ff3030 !important;
+    text-shadow: 0px 0px 6px #f00;
+    font-size: 17pt !important;
+}
+
+.blocklyPreview {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%,-50%);
+    width: calc(100% - 1em);
+    max-height: calc(100% - 1em);
+}
+
+body.blocklyMinimalBody {
+    min-width: initial;
+    overflow: initial;
+}
+
+@supports (-ms-accelerator:true) {
+    .rtl .blocklyPreview {
+        right:50%;
+        left:auto;
+    }
+}
+
+/* Fix for context menu scroll issue */
+.blocklyWidgetDiv {
+    position: fixed;
+}
+
+/*******************************
+    Monaco Editor
+    Add Monaco Editor CSS here that you don't want override in themes
+*******************************/
+#monacoEditor {
+    direction:ltr;
+}
+
+/* Monaco Editor Errors */
 .monaco-editor .error-view-zone {
-    color:white;
-    border-radius: 6px;
-    padding-left: .5em;
-    padding-right: .5em;
-    width: initial !important;
-    background-color: #B4009E;
     font-family: Monaco, Menlo, "Ubuntu Mono", Consolas, source-code-pro, monospace;
-}
-
-.monaco-editor .warning-view-zone {
-    color:white;
-    border-radius: 6px;
-    padding-left: .5em;
-    padding-right: .5em;
     width: initial !important;
-    background-color: #D83B01;
-    font-family: Monaco, Menlo, "Ubuntu Mono", Consolas, source-code-pro, monospace;
+}
+.monaco-editor.vs-dark .error-view-zone {
+    color:white;
+}
+.monaco-editor .error-view-zone .marker-widget {
+    border-radius: 2px !important;
+    padding-left: 10px !important;
+    padding-right: 20px !important;
 }
 
-/* monaco: Suggest Widget */
-
-.monaco-editor .suggest-widget {
-    border-radius:5px;
-    font-size: 15px;
+/* Fix for monaco editor Signature bug in Safari */
+.monaco-editor .parameter-hints-widget {
+    flex-direction: row !important;
 }
 
-.monaco-list-row.focused {
-    background-color:#0078D7;
-    color: #fff;
+.line-numbers {
+    display:none;
 }
 
-.monaco-editor .suggest-widget:not(.frozen) .monaco-list .monaco-list-row .monaco-highlighted-label .highlight {
-    color: #0078D7;
+.monacoToolboxDiv {
+    position: relative;
+    display: inline-block;
+    overflow-x: visible;
+    overflow-y: auto;
+}
+.monacoToolboxDiv.hide {
+    display: none;
 }
 
-.monaco-editor .suggest-widget:not(.frozen) .monaco-list .monaco-list-row.focused .monaco-highlighted-label .highlight {
-    color: #fff;
-}
-
-.monaco-editor .suggest-widget .details > .monaco-scrollable-element > .body > .type, .monaco-editor .suggest-widget .monaco-list .monaco-list-row .type-label {
-    color: #FFB900;
-}
-
-.monaco-editor .suggest-widget .details > .monaco-scrollable-element > .body > .docs, .monaco-editor .suggest-widget .monaco-list .monaco-list-row .docs {
-    color: #fff;
-}
-
-/* monaco: Tokens */
-
-.token.ts.identifier:hover, .token.ts.keyword:hover {
-    outline: 1px auto #bdc3c7;
-}
-
-.token.ts.keyword.if, .token.ts.keyword.else {
-    color: #5B80A5;
-}
-
-.token.ts.keyword.while:not(.true), .token.ts.keyword.for {
-    color: #5BA55B;
-}
-
-.highlight-statement {
-    background-color: #FFB900;
+#monacoEditorInner {
+    position: relative !important;
+    display: inline-block;
 }

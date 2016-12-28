@@ -172,7 +172,7 @@ namespace pxsim {
     export class EventQueue<T> {
         max: number = 5;
         events: T[] = [];
-        handler: RefAction;
+        private mHandler: RefAction;
 
         constructor(public runtime: Runtime) { }
 
@@ -194,6 +194,22 @@ namespace pxsim {
                     if (this.events.length > 0)
                         this.poke();
                 })
+        }
+
+        get handler() {
+            return this.mHandler;
+        }
+
+        set handler(a: RefAction) {
+            if (this.mHandler) {
+                pxtcore.decr(this.mHandler);
+            }
+
+            this.mHandler = a;
+
+            if (this.mHandler) {
+                pxtcore.incr(this.mHandler);
+            }
         }
     }
 
@@ -368,6 +384,10 @@ namespace pxsim {
                         case "stepinto":
                             breakAlways = true
                             break
+                        case "stepout":
+                            breakAlways = true;
+                            breakFrame = s.parent || s;
+                            break;
                     }
 
                     return loop(s)
@@ -393,6 +413,7 @@ namespace pxsim {
                     case "resume":
                     case "stepover":
                     case "stepinto":
+                    case "stepout":
                         if (dbgResume)
                             dbgResume(msg);
                         break;

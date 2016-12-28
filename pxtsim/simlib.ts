@@ -34,14 +34,14 @@ namespace pxsim {
 
         constructor(private runtime: Runtime) { }
 
-        listen(id: number, evid: number, handler: RefAction) {
+        listen(id: number | string, evid: number | string, handler: RefAction) {
             let k = id + ":" + evid;
             let queue = this.queues[k];
             if (!queue) queue = this.queues[k] = new EventQueue<number>(this.runtime);
             queue.handler = handler;
         }
 
-        queue(id: number, evid: number, value: number = 0) {
+        queue(id: number | string, evid: number | string, value: number = 0) {
             let k = id + ":" + evid;
             let queue = this.queues[k];
             if (queue) queue.push(value);
@@ -53,6 +53,7 @@ namespace pxsim {
         // false means last frame
         frame: () => boolean;
         whenDone?: (cancelled: boolean) => void;
+        setTimeoutHandle?: number;
     }
 
     export class AnimationQueue {
@@ -61,22 +62,23 @@ namespace pxsim {
 
         constructor(private runtime: Runtime) {
             this.process = () => {
-                let top = this.queue[0]
-                if (!top) return
-                if (this.runtime.dead) return
-                runtime = this.runtime
-                let res = top.frame()
-                runtime.queueDisplayUpdate()
-                runtime.maybeUpdateDisplay()
+                let top = this.queue[0];
+                if (!top) return;
+                if (this.runtime.dead) return;
+                runtime = this.runtime;
+                let res = top.frame();
+                runtime.queueDisplayUpdate();
+                runtime.maybeUpdateDisplay();
                 if (res === false) {
                     this.queue.shift();
                     // if there is already something in the queue, start processing
-                    if (this.queue[0])
-                        setTimeout(this.process, this.queue[0].interval)
+                    if (this.queue[0]) {
+                        this.queue[0].setTimeoutHandle = setTimeout(this.process, this.queue[0].interval);
+                    }
                     // this may push additional stuff
                     top.whenDone(false);
                 } else {
-                    setTimeout(this.process, top.interval)
+                    top.setTimeoutHandle = setTimeout(this.process, top.interval);
                 }
             }
         }
@@ -86,6 +88,9 @@ namespace pxsim {
             this.queue = []
             for (let a of q) {
                 a.whenDone(true)
+                if (a.setTimeoutHandle) {
+                    clearTimeout(a.setTimeoutHandle);
+                }
             }
         }
 
@@ -94,7 +99,10 @@ namespace pxsim {
             if (top) {
                 this.queue.shift();
                 top.whenDone(true);
-            }
+                if (top.setTimeoutHandle) {
+                    clearTimeout(top.setTimeoutHandle);
+                }
+             }
         }
 
         public enqueue(anim: AnimationOptions) {
@@ -115,6 +123,7 @@ namespace pxsim {
     }
 
     export namespace AudioContextManager {
+        let _frequency = 0;
         let _context: any; // AudioContext
         let _vco: any; // OscillatorNode;
         let _vca: any; // GainNode;
@@ -138,10 +147,17 @@ namespace pxsim {
 
         export function stop() {
             if (_vca) _vca.gain.value = 0;
+            _frequency = 0;
+        }
+
+        export function frequency(): number {
+            return _frequency;
         }
 
         export function tone(frequency: number, gain: number) {
             if (frequency <= 0) return;
+            _frequency = frequency;
+
             let ctx = context();
             if (!ctx) return;
 
@@ -339,7 +355,7 @@ namespace pxsim.visuals {
 
     export type WireColor =
         "black" | "white" | "gray" | "purple" | "blue" | "green" | "yellow" | "orange" | "red" | "brown" | "pink";
-    export const GPIO_WIRE_COLORS = ["pink", "orange", "yellow", "green", "purple" ];
+    export const GPIO_WIRE_COLORS = ["pink", "orange", "yellow", "green", "purple"];
     export const WIRE_COLOR_MAP: Map<string> = {
         black: "#514f4d",
         white: "#fcfdfc",

@@ -5,6 +5,7 @@ var ju = require("./jakeutil")
 var path = require("path")
 var expand = ju.expand;
 var cmdIn = ju.cmdIn;
+var strpSrcMap = ju.strpSrcMap;
 
 function tscIn(task, dir, builtDir) {
     let command = 'node ../node_modules/typescript/bin/tsc'
@@ -90,16 +91,18 @@ file('built/pxt-common.json', expand(['libs/pxt-common'], ".ts"), function () {
     fs.writeFileSync(this.name, JSON.stringify(std, null, 4))
 })
 
-file('built/blockly.d.ts', ['localtypings/blockly.d.ts'], function() { ju.cpR('localtypings/blockly.d.ts', 'built/blockly.d.ts') })
-file('built/pxtparts.d.ts', ['localtypings/pxtparts.d.ts'], function() { ju.cpR('localtypings/pxtparts.d.ts', 'built/pxtparts.d.ts') })
-file('built/pxtarget.d.ts', ['built/pxtpackage.d.ts', 'built/pxtparts.d.ts', 'localtypings/pxtarget.d.ts'], function() { ju.cpR('localtypings/pxtarget.d.ts', 'built/pxtarget.d.ts') })
-file('built/pxtpackage.d.ts', ['localtypings/pxtpackage.d.ts'], function() { ju.cpR('localtypings/pxtpackage.d.ts', 'built/pxtpackage.d.ts') })
+file('built/blockly.d.ts', ['localtypings/blockly.d.ts'], function () { ju.cpR('localtypings/blockly.d.ts', 'built/blockly.d.ts') })
+file('built/monaco.d.ts', ['localtypings/monaco.d.ts'], function () { ju.cpR('localtypings/monaco.d.ts', 'built/monaco.d.ts') })
+file('built/pxtparts.d.ts', ['localtypings/pxtparts.d.ts'], function () { ju.cpR('localtypings/pxtparts.d.ts', 'built/pxtparts.d.ts') })
+file('built/pxtarget.d.ts', ['built/blockly.d.ts', 'built/pxtpackage.d.ts', 'built/pxtparts.d.ts', 'localtypings/pxtarget.d.ts'], function () { ju.cpR('localtypings/pxtarget.d.ts', 'built/pxtarget.d.ts') })
+file('built/pxtpackage.d.ts', ['localtypings/pxtpackage.d.ts'], function () { ju.cpR('localtypings/pxtpackage.d.ts', 'built/pxtpackage.d.ts') })
 
 compileDir("pxtlib", ["built/pxtarget.d.ts", "built/pxtparts.d.ts", "built/pxtpackage.d.ts", "built/typescriptServices.d.ts"])
+compileDir("pxtwinrt", ["built/pxtlib.js"])
 compileDir("pxtblocks", ["built/pxtlib.js", "built/blockly.d.ts"])
 compileDir("pxtrunner", ["built/pxtlib.js", "built/pxtsim.js", "built/pxtblocks.js"])
 compileDir("pxtsim", ["built/pxtlib.js", "built/pxtblocks.js"])
-compileDir("pxteditor", ["built/pxtlib.js", "built/pxtblocks.js"])
+compileDir("pxteditor", ["built/pxtlib.js", "built/pxtblocks.js", "built/monaco.d.ts"])
 compileDir("cli", ["built/pxtlib.js", "built/pxtsim.js"])
 compileDir("backendutils", ["built/pxtarget.d.ts", 'pxtlib/emitter/util.ts', 'pxtlib/docsrender.ts'])
 
@@ -108,8 +111,13 @@ task("travis", ["lint", "test", "upload"])
 task('upload', ["wapp", "built/pxt.js"], { async: true }, function () {
     jake.exec([
         "node built/pxt.js travis",
-        "node built/pxt.js buildtarget",
-        "node built/pxt.js uploaddoc",
+        "node built/pxt.js buildtarget"
+    ], { printStdout: true }, complete.bind(this));
+})
+
+task('downloadcrowdin', ["built/pxt.js"], { async: true }, function () {
+    jake.exec([
+        "node built/pxt.js crowdin download strings.json webapp/public/locales"
     ], { printStdout: true }, complete.bind(this));
 })
 
@@ -124,6 +132,7 @@ task("lint", [], { async: true }, function () {
         "pxtlib/emitter",
         "pxtrunner",
         "pxtsim",
+        "pxtwinrt",
         "webapp/src",
         "monacots"]
         .map(function (d) { return "node node_modules/tslint/bin/tslint ./" + d + "/*.ts" })
@@ -151,10 +160,10 @@ task('updatestrings', ['built/localization.json'])
 
 
 file('built/localization.json', ju.expand1(
-    [   "pxtlib",
+    ["pxtlib",
         "pxtblocks",
         "webapp/src"]
-    ), function () {
+), function () {
     var errCnt = 0;
     var translationStrings = {}
     var translationHelpStrings = {}
@@ -218,6 +227,7 @@ task('wapp', [
     "built/web/pxtsim.js",
     "built/web/pxtblocks.js",
     "built/web/pxteditor.js",
+    "built/web/pxtwinrt.js",
     'built/web/main.js',
     'built/web/worker.js',
     'built/web/fonts/icons.woff2',
@@ -231,7 +241,8 @@ file("built/web/pxtlib.js", [
     "built/pxtblocks.js",
     "built/pxtsim.js",
     "built/pxtrunner.js",
-    "built/pxteditor.js"
+    "built/pxteditor.js",
+    "built/pxtwinrt.js"
 ], function () {
     jake.mkdirP("built/web")
     jake.cpR("node_modules/jquery/dist/jquery.js", "built/web/jquery.js")
@@ -242,6 +253,7 @@ file("built/web/pxtlib.js", [
     jake.cpR("built/pxtsim.js", "built/web/")
     jake.cpR("built/pxtrunner.js", "built/web/")
     jake.cpR("built/pxteditor.js", "built/web/")
+    jake.cpR("built/pxtwinrt.js", "built/web/")
     jake.cpR("external/tdast.js", "built/web/")
 
     let additionalExports = [
@@ -261,7 +273,7 @@ task('monaco-editor', [
 ])
 
 
-task('serve', ['default'], {async: true}, function() {
+task('serve', ['default'], { async: true }, function () {
     let cmdArg = '';
     if (process.env.sourceMaps === 'true') {
         cmdArg = '-include-source-maps'
@@ -281,6 +293,9 @@ task('serve', ['default'], {async: true}, function() {
     else if (process.env.packaged === 'true') {
         cmdArg = '-pkg'
     }
+    if (process.env.browser) {
+        cmdArg += ' -browser ' + process.env.browser;
+    }
     cmdIn(this, '../pxt-microbit', 'node ../pxt/built/pxt.js serve ' + cmdArg)
 })
 
@@ -291,28 +306,25 @@ file('built/web/vs/editor/editor.main.js', ['node_modules/pxt-monaco-typescript/
     monacotypescriptcontribution.replace('["require","exports"]', '["require","exports","vs/editor/edcore.main"]')
 
     let monacoeditor = fs.readFileSync("node_modules/monaco-editor/dev/vs/editor/editor.main.js", "utf8")
-    monacoeditor = monacoeditor.replace("var FocusHeight = 35", "var FocusHeight = 45");
-    monacoeditor = monacoeditor.replace("var UnfocusedHeight = 19", "var UnfocusedHeight = 29");
+    // Remove certain actions from the context menu
+    monacoeditor = monacoeditor.replace(/((GoToDefinitionAction.ID|'editor.action.(changeAll|quickOutline|previewDeclaration|referenceSearch.trigger)')[.\s\S]*?)(menuOpts:[.\s\S]*?})/gi, '$1')
     monacoeditor = monacoeditor.replace(/.*define\(\"vs\/language\/typescript\/src\/monaco.contribution\",.*/gi, `${monacotypescriptcontribution}`)
-    monacoeditor = monacoeditor.replace("this._container.focus()", "//this._container.focus()");
-    monacoeditor = monacoeditor.replace("this.editor.revealPosition(position);", "//this.editor.revealPosition(position);");
-    monacoeditor = monacoeditor.replace("this.editor.setSelection(where);", "//this.editor.setSelection(where);");
-    monacoeditor = monacoeditor.replace("this.editor.revealLine(revealLineNumber);", "//this.editor.revealLine(revealLineNumber);");
     fs.writeFileSync("built/web/vs/editor/editor.main.js", monacoeditor)
 
     jake.mkdirP("webapp/public/vs")
-    jake.cpR("node_modules/monaco-editor/dev/vs/base", "webapp/public/vs/")
-    jake.cpR("node_modules/monaco-editor/dev/vs/editor", "webapp/public/vs/")
+    jake.cpR("node_modules/monaco-editor/min/vs/base", "webapp/public/vs/")
+    jake.cpR("node_modules/monaco-editor/min/vs/editor", "webapp/public/vs/")
     fs.unlinkSync("webapp/public/vs/editor/editor.main.js")
 
-    jake.cpR("node_modules/monaco-editor/dev/vs/css.js", "webapp/public/vs/")
-    jake.cpR("node_modules/monaco-editor/dev/vs/loader.js", "webapp/public/vs/")
-    jake.cpR("node_modules/monaco-editor/dev/vs/nls.js", "webapp/public/vs/")
+    jake.cpR("node_modules/monaco-editor/min/vs/loader.js", "webapp/public/vs/")
     jake.mkdirP("webapp/public/vs/basic-languages/src")
-    jake.cpR("node_modules/monaco-editor/dev/vs/basic-languages/src/bat.js", "webapp/public/vs/basic-languages/src/")
-    jake.cpR("node_modules/monaco-editor/dev/vs/basic-languages/src/cpp.js", "webapp/public/vs/basic-languages/src/")
+    jake.cpR("node_modules/monaco-editor/min/vs/basic-languages/src/bat.js", "webapp/public/vs/basic-languages/src/")
+    jake.cpR("node_modules/monaco-editor/min/vs/basic-languages/src/cpp.js", "webapp/public/vs/basic-languages/src/")
     jake.mkdirP("webapp/public/vs/language/json")
-    jake.cpR("node_modules/monaco-editor/dev/vs/language/json/", "webapp/public/vs/language/")
+    jake.cpR("node_modules/monaco-editor/min/vs/language/json/", "webapp/public/vs/language/")
+
+    // Strip out the sourceMappingURL= from each of the monaco files (recursively)
+    strpSrcMap(this, "webapp/public/vs/")
 })
 
 file('built/web/vs/language/typescript/src/mode.js', ['node_modules/pxt-monaco-typescript/release/src/mode.js'], function () {
@@ -329,7 +341,8 @@ file('built/webapp/src/app.js', expand([
     "built/web/pxtlib.js",
     "built/web/pxtsim.js",
     "built/web/pxtblocks.js",
-    "built/web/pxteditor.js"
+    "built/web/pxteditor.js",
+    "built/web/pxtwinrt.js"    
 ]), { async: true }, function () {
     tscIn(this, "webapp", "built/webapp")
 })
@@ -347,8 +360,10 @@ file('built/web/fonts/icons.woff2', [], function () {
     jake.cpR("node_modules/semantic-ui-less/themes/default/assets/fonts", "built/web/")
 })
 
-file('built/web/semantic.css', ["webapp/theme.config", "webapp/site/globals/site.variables"], { async: true }, function () {
-    cmdIn(this, ".", 'node node_modules/less/bin/lessc webapp/style.less built/web/semantic.css --include-path=node_modules/semantic-ui-less:webapp/foo/bar')
+file('built/web/semantic.css', ['built/pxt.js',
+    "theme/style.less", "theme/theme.config", "theme/themes/pxt/globals/site.variables"
+], { async: true }, function () {
+    cmdIn(this, ".", 'node built/pxt.js buildcss')
 })
 
 file('built/web/icons.css', expand(["svgicons"]), { async: true }, function () {

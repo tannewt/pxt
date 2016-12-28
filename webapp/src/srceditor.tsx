@@ -36,9 +36,6 @@ export class Editor {
     acceptsFile(file: pkg.File) {
         return false
     }
-    menu(): JSX.Element {
-        return null;
-    }
     getId() {
         return "editor"
     }
@@ -56,6 +53,7 @@ export class Editor {
     prepare() {
         this.isReady = true;
     }
+    resize(e?: Event) { }
     domUpdate() { }
     saveToTypeScript(): string {
         return null

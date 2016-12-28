@@ -1,0 +1,25 @@
+/*******************************
+         Site Overrides
+*******************************/
+
+#menubar {
+    position: absolute;
+    left: 0;
+    top: 0;
+    right: 0;
+}
+
+#menubar .ui.menu {
+    height: @mainMenuHeight;
+    min-height: @mainMenuMinHeight !important;
+}
+
+#menubar .item > .button {
+    margin-right: 0.25rem;
+}
+
+@media only screen and (max-width:@largestMobileEditorBreakpoint) {
+    #menubar .ui.menu {
+        height: @mobileMenuHeight !important;
+    }
+}

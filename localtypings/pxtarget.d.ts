@@ -1,7 +1,20 @@
 /// <reference path="pxtpackage.d.ts" />
 /// <reference path="pxtparts.d.ts" />
+/// <reference path="blockly.d.ts" />
 
 declare namespace pxt {
+    // targetconfig.json
+    interface TargetConfig {
+        packages?: PackagesConfig;
+    }
+
+    interface PackagesConfig {
+        approvedOrgs?: string[];
+        approvedRepos?: string[];
+        bannedOrgs?: string[];
+        bannedRepos?: string[];
+    }
+
     interface AppTarget {
         id: string; // has to match ^[a-z]+$; used in URLs and domain names
         forkof?: string; // id of a target we're based on
@@ -21,13 +34,20 @@ declare namespace pxt {
         compileService?: TargetCompileService;
         analytics?: AppAnalytics;
     }
-    
+
     interface ProjectTemplate {
         id: string;
         config: PackageConfig;
         files: Map<string>;
     }
-    
+
+    interface BlockToolboxDefinition {
+        namespace: string;
+        type: string;
+        gap?: number;
+        weight?: number;
+        fields?: Map<string>;
+    }
 
     interface RuntimeOptions {
         mathBlocks?: boolean;
@@ -36,14 +56,9 @@ declare namespace pxt {
         variablesBlocks?: boolean;
         logicBlocks?: boolean;
         loopsBlocks?: boolean;
-
-        extraBlocks?: {
-            namespace: string;
-            type: string;
-            gap?: number;
-            weight?: number;
-            fields?: Map<string>;
-        }[]
+        extraBlocks?: BlockToolboxDefinition[];
+        onStartColor?: string;
+        onStartNamespace?: string;
     }
 
     interface AppAnalytics {
@@ -53,6 +68,7 @@ declare namespace pxt {
 
     interface AppSerial {
         manufacturerFilter?: string; // used by node-serial
+        nameFilter?: string; // regex to match devices
         log?: boolean;
     }
 
@@ -67,6 +83,7 @@ declare namespace pxt {
 
     interface AppSimulator {
         autoRun?: boolean;
+        stopOnChange?: boolean;
         streams?: boolean;
         aspectRatio?: number; // width / height
         boardDefinition?: pxsim.BoardDefinition;
@@ -77,10 +94,13 @@ declare namespace pxt {
 
     interface TargetCompileService {
         yottaTarget?: string; // bbc-microbit-classic-gcc
+        yottaBinary?: string; // defaults to "pxt-microbit-app-combined.hex"
         yottaCorePackage?: string; // pxt-microbit-core
         githubCorePackage?: string; // microsoft/pxt-microbit-core
+        platformioIni?: string[];
         gittag: string;
         serviceId: string;
+        buildEngine?: string;  // default is yotta, set to platformio
     }
 
     interface SpecializedResource {
@@ -95,6 +115,7 @@ declare namespace pxt {
         name?: string;
         title?: string;
         description?: string;
+        twitter?: string;
         defaultLocale?: string;
         logoUrl?: string;
         logo?: string;
@@ -104,10 +125,13 @@ declare namespace pxt {
         organization?: string;
         organizationUrl?: string;
         organizationLogo?: string;
+        organizationWideLogo?: string;
         homeUrl?: string;
         embedUrl?: string;
         docMenu?: DocMenuEntry[];
-        sideDoc?: string;
+        hideSideDocs?: boolean;
+        sideDoc?: string; // if set: show the getting started button, clicking on getting started button links to that page
+        hasReferenceDocs?: boolean; // if true: the monaco editor will add an option in the context menu to load the reference docs
         boardName?: string;
         privacyUrl?: string;
         termsOfUseUrl?: string;
@@ -120,8 +144,20 @@ declare namespace pxt {
         htmlTemplates?: Map<string>;
         githubUrl?: string;
         usbHelp?: SpecializedResource[];
-        usbDocs?: string
+        usbDocs?: string;
+        exportVsCode?: boolean;
         browserSupport?: SpecializedResource[];
+        invertedMenu?: boolean; // if true: apply the inverted class to the menu
+        coloredToolbox?: boolean; // if true: color the blockly toolbox categories
+        invertedToolbox?: boolean; // if true: use the blockly inverted toolbox
+        invertedMonaco?: boolean; // if true: use the vs-dark monaco theme
+        blocklyOptions?: Blockly.Options; // Blockly options, see Configuration: https://developers.google.com/blockly/guides/get-started/web
+        simAnimationEnter?: string; // Simulator enter animation
+        simAnimationExit?: string; // Simulator exit animation
+        projectGallery?: string;
+        crowdinProject?: string;
+        monacoToolbox?: boolean; // if true: show the monaco toolbox when in the monaco editor
+        blockHats?: boolean; // if true, event blocks have hats
     }
 
     interface DocMenuEntry {
@@ -129,14 +165,6 @@ declare namespace pxt {
         // needs to have one of `path` or `subitems` 
         path?: string;
         subitems?: DocMenuEntry[];
-    }
-
-    interface TargetVersions {
-        target: string;
-        pxt: string;
-        tag?: string;
-        branch?: string;
-        commits?: string; // URL
     }
 
     interface TargetBundle extends AppTarget {
@@ -148,16 +176,19 @@ declare namespace pxt {
 
 declare namespace ts.pxtc {
     interface CompileTarget {
-        simulatorPostMessage?: boolean; // provided by simulator as a post command message
         isNative: boolean; // false -> JavaScript for simulator
         nativeType?: string; // currently only "thumb"
         hasHex: boolean;
+        useUF2?: boolean;
         hexMimeType?: string;
         driveName?: string;
         jsRefCounting?: boolean;
         floatingPoint?: boolean;
         deployDrives?: string; // partial name of drives where the .hex file should be copied
-        upgrades?: PackageUpgradePolicy[];
+        deployFileMarker?: string;
+        shortPointers?: boolean; // set to true for 16 bit pointers
+        flashCodeAlign?: number; // defaults to 1k
+        upgrades?: UpgradePolicy[];
     }
 
     interface CompileOptions {
@@ -165,7 +196,7 @@ declare namespace ts.pxtc {
         target: CompileTarget;
         testMode?: boolean;
         sourceFiles?: string[];
-        hexinfo: any;
+        hexinfo: HexInfo;
         extinfo?: ExtensionInfo;
         noEmit?: boolean;
         forceEmit?: boolean;
@@ -178,9 +209,9 @@ declare namespace ts.pxtc {
         embedBlob?: string; // base64
     }
 
-    interface PackageUpgradePolicy {
-        type: "package";
-        map: pxt.Map<string>;
+    interface UpgradePolicy {
+        type: string;
+        map?: pxt.Map<string>;
     }
 
     interface FuncInfo {
@@ -194,11 +225,16 @@ declare namespace ts.pxtc {
         functions: FuncInfo[];
         generatedFiles: pxt.Map<string>;
         extensionFiles: pxt.Map<string>;
-        yotta: pxt.YottaConfig;
+        yotta?: pxt.YottaConfig;
+        platformio?: pxt.PlatformIOConfig;
         sha: string;
         compileData: string;
         shimsDTS: string;
         enumsDTS: string;
         onlyPublic: boolean;
+    }
+
+    interface HexInfo {
+        hex: string[];
     }
 }

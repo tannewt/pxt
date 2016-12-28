@@ -12,9 +12,34 @@ namespace pxt {
 
     export var appTarget: TargetBundle;
 
+    export function setAppTarget(trg: TargetBundle) {
+        appTarget = trg
+
+        // patch-up the target
+        let comp = appTarget.compile
+        if (!comp)
+            comp = appTarget.compile = { isNative: false, hasHex: false }
+        if (comp.hasHex && comp.jsRefCounting === undefined)
+            comp.jsRefCounting = true
+        if (!comp.hasHex && comp.floatingPoint === undefined)
+            comp.floatingPoint = true
+        if (comp.nativeType == "AVR") {
+            comp.shortPointers = true
+            comp.flashCodeAlign = 0x10
+        }
+        if (!trg.appTheme.embedUrl)
+            trg.appTheme.embedUrl = trg.appTheme.homeUrl
+        let cs = appTarget.compileService
+        if (cs) {
+            if (cs.yottaTarget && !cs.yottaBinary)
+                cs.yottaBinary = "pxt-microbit-app-combined.hex"
+        }
+    }
+
     export interface PxtOptions {
         debug?: boolean;
         light?: boolean; // low resource device
+        wsPort?: number;
     }
     export var options: PxtOptions = {};
 
@@ -29,17 +54,19 @@ namespace pxt {
             console.log(msg);
         } : () => { };
 
-    export var reportException: (err: any, data: any) => void = function (e, d) {
+    export var reportException: (err: any, data?: Map<string>) => void = function (e, d) {
         if (console) {
             console.error(e);
             if (d) {
                 try {
-                    pxt.log(JSON.stringify(d, null, 2))
+                    // log it as object, so native object inspector can be used
+                    console.log(d)
+                    //pxt.log(JSON.stringify(d, null, 2))
                 } catch (e) { }
             }
         }
     }
-    export var reportError: (cat: string, msg: string, data?: Map<number | string>) => void = function (cat, msg, data) {
+    export var reportError: (cat: string, msg: string, data?: Map<string>) => void = function (cat, msg, data) {
         if (console) {
             console.error(`${cat}: ${msg}`);
             if (data) {
@@ -51,14 +78,22 @@ namespace pxt {
     }
 
     /**
-     * Time an event by including the time between this call 
-     * and a later 'tickEvent' call for the same event in the properties sent with the event.
-     */
-    export var timeEvent: (id: string) => void = function(id) {}
-    /**
      * Track an event.
      */
-    export var tickEvent: (id: string, data?: Map<string | number>) => void = function (id) {}
+    export var tickEvent: (id: string, data?: Map<string | number>) => void = function (id) { }
+
+    let activityEvents: Map<number> = {};
+    const tickActivityDebounced = Util.debounce(() => {
+        tickEvent("activity", activityEvents);
+        activityEvents = {};
+    }, 10000, false);
+    /**
+     * Ticks activity events. This event gets aggregated and eventually gets sent.
+     */
+    export function tickActivity(...ids: string[]) {
+        ids.forEach(id => activityEvents[id] = (activityEvents[id] || 0) + 1);
+        tickActivityDebounced();
+    }
 
     export interface WebConfig {
         relprefix: string; // "/beta---",
@@ -68,7 +103,7 @@ namespace pxt {
         pxtVersion: string; // "0.3.8",
         pxtRelId: string; // "zstad",
         pxtCdnUrl: string; // "https://az851932.vo.msecnd.net/app/zstad/c/",
-        targetUrl: string; // "https://codethemicrobit.com"
+        targetUrl: string; // "https://pxt.microbit.org"
         targetVersion: string; // "0.2.108",
         targetRelId: string; // "zowrj",
         targetCdnUrl: string; // "https://az851932.vo.msecnd.net/app/zowrj/c/",
@@ -102,6 +137,13 @@ namespace pxt {
 
     export var webConfig: WebConfig;
 
+    export function getOnlineCdnUrl(): string {
+        if (!webConfig) return null
+        let m = /^(https:\/\/[^\/]+)/.exec(webConfig.pxtCdnUrl)
+        if (m) return m[1]
+        else return null
+    }
+
     export function setupWebConfig(cfg: WebConfig) {
         if (cfg) webConfig = cfg;
         else if (!webConfig) webConfig = localWebConfig()
@@ -113,9 +155,9 @@ namespace pxt {
 
     export interface Host {
         readFile(pkg: Package, filename: string): string;
-        writeFile(pkg: Package, filename: string, contents: string): void;
+        writeFile(pkg: Package, filename: string, contents: string, force?: boolean): void;
         downloadPackageAsync(pkg: Package): Promise<void>;
-        getHexInfoAsync(extInfo: pxtc.ExtensionInfo): Promise<any>;
+        getHexInfoAsync(extInfo: pxtc.ExtensionInfo): Promise<pxtc.HexInfo>;
         cacheStoreAsync(id: string, val: string): Promise<void>;
         cacheGetAsync(id: string): Promise<string>; // null if not found
     }
@@ -132,6 +174,7 @@ namespace pxt {
         path: string; // eg "foo/bar"
         config: pxt.PackageConfig; // pxt.json
         files: FsFile[]; // this includes pxt.json
+        icon?: string;
     }
 
     export interface FsPkgs {
@@ -179,7 +222,8 @@ namespace pxt {
             if (proto == "pub") {
                 return Cloud.downloadScriptFilesAsync(this.verArgument())
             } else if (proto == "github") {
-                return pxt.github.downloadPackageAsync(this.verArgument())
+                return pxt.packagesConfigAsync()
+                    .then(config => pxt.github.downloadPackageAsync(this.verArgument(), config))
                     .then(resp => resp.files)
             } else if (proto == "embed") {
                 let resp = pxt.getEmbeddedScript(this.verArgument())
@@ -226,10 +270,11 @@ namespace pxt {
                     pxt.debug('downloading ' + verNo)
                     return this.host().downloadPackageAsync(this)
                         .then(() => {
-                            let confStr = this.readFile(pxt.CONFIG_NAME)
+                            const confStr = this.readFile(pxt.CONFIG_NAME)
+                            const mainTs = this.readFile("main.ts")
                             if (!confStr)
                                 U.userError(`package ${this.id} is missing ${pxt.CONFIG_NAME}`)
-                            this.parseConfig(confStr)
+                            this.parseConfig(confStr, mainTs);
                             if (this.level != 0)
                                 this.config.installedVersion = this.version()
                             this.saveConfig()
@@ -249,37 +294,71 @@ namespace pxt {
             if (typeof this.config.name != "string" || !this.config.name ||
                 (this.config.public && !/^[a-z][a-z0-9\-_]+$/i.test(this.config.name)))
                 U.userError("Invalid package name: " + this.config.name)
-            let minVer = this.config.minTargetVersion
-            if (minVer && semver.strcmp(minVer, appTarget.versions.target) > 0)
+            if (this.config.targetVersions
+                && this.config.targetVersions.target
+                && semver.strcmp(this.config.targetVersions.target, appTarget.versions.target) > 0)
                 U.userError(lf("Package {0} requires target version {1} (you are running {2})",
-                    this.config.name, minVer, appTarget.versions.target))
+                    this.config.name, this.config.targetVersions.target, appTarget.versions.target))
+        }
+
+        addMissingPackages(config: pxt.PackageConfig, ts: string) {
+            const upgrades = appTarget.compile ? appTarget.compile.upgrades : undefined;
+            if (ts && upgrades)
+                upgrades.filter(rule => rule.type == "missingPackage")
+                    .forEach(rule => {
+                        for (const match in rule.map) {
+                            const regex = new RegExp(match, 'g');
+                            const pkg = rule.map[match];
+                            ts.replace(regex, (m) => {
+                                if (!config.dependencies[pkg]) {
+                                    pxt.log(`adding missing package ${pkg}`);
+                                    config.dependencies[pkg] = "*"
+                                }
+                                return "";
+                            })
+                        }
+                    })
         }
 
         upgradePackage(pkg: string, val: string): string {
             if (val != "*") return pkg;
-            let upgrades = appTarget.compile.upgrades;
+            const upgrades = appTarget.compile ? appTarget.compile.upgrades : undefined;
             let newPackage = pkg;
             if (upgrades) {
-                upgrades.forEach((rule) => {
-                    if (rule.type == "package") {
+                upgrades.filter(rule => rule.type == "package")
+                    .forEach(rule => {
                         for (let match in rule.map) {
                             if (newPackage == match) {
                                 newPackage = rule.map[match];
                             }
                         }
-                    }
-                });
+                    });
             }
             return newPackage;
         }
 
-        private parseConfig(str: string) {
-            let cfg = <PackageConfig>JSON.parse(str)
+        upgradeAPI(fileContents: string): string {
+            const upgrades = appTarget.compile ? appTarget.compile.upgrades : undefined;
+            let updatedContents = fileContents;
+            if (upgrades) {
+                upgrades.filter(rule => rule.type == "api")
+                    .forEach(rule => {
+                        for (const match in rule.map) {
+                            const regex = new RegExp(match, 'g');
+                            updatedContents = updatedContents.replace(regex, rule.map[match]);
+                        }
+                    });
+            }
+            return updatedContents;
+        }
+
+        private parseConfig(cfgSrc: string, mainTs: string) {
+            const cfg = <PackageConfig>JSON.parse(cfgSrc)
             this.config = cfg;
 
-            let currentConfig = JSON.stringify(this.config);
-            for (let dep in this.config.dependencies) {
-                let value = this.upgradePackage(dep, this.config.dependencies[dep]);
+            const currentConfig = JSON.stringify(this.config);
+            for (const dep in this.config.dependencies) {
+                const value = this.upgradePackage(dep, this.config.dependencies[dep]);
                 if (value != dep) {
                     delete this.config.dependencies[dep];
                     if (value) {
@@ -287,6 +366,7 @@ namespace pxt {
                     }
                 }
             }
+            this.addMissingPackages(this.config, mainTs);
             if (JSON.stringify(this.config) != currentConfig) {
                 this.saveConfig();
             }
@@ -299,12 +379,13 @@ namespace pxt {
             let initPromise = Promise.resolve()
 
             this.isLoaded = true
-            let str = this.readFile(pxt.CONFIG_NAME)
+            const str = this.readFile(pxt.CONFIG_NAME);
+            const mainTs = this.readFile("main.ts");
             if (str == null) {
                 if (!isInstall)
                     U.userError("Package not installed: " + this.id)
             } else {
-                initPromise = initPromise.then(() => this.parseConfig(str))
+                initPromise = initPromise.then(() => this.parseConfig(str, mainTs))
             }
 
             if (isInstall)
@@ -316,7 +397,7 @@ namespace pxt {
                         let mod = this.resolveDep(id)
                         ver = ver || "*"
                         if (mod) {
-                            if (mod._verspec != ver)
+                            if (mod._verspec != ver && (!/^file:/.test(mod._verspec) || !/^file:/.test(ver)))
                                 U.userError("Version spec mismatch on " + id)
                             mod.level = Math.min(mod.level, this.level + 1)
                             return Promise.resolve()
@@ -348,11 +429,22 @@ namespace pxt {
         /**
          * Returns localized strings qName -> translation
          */
-        packageLocalizationStrings(lang: string): Map<string> {
-            let r: Map<string> = {};
-            let files = this.config.files;
+        packageLocalizationStringsAsync(lang: string): Promise<Map<string>> {
+            const targetId = pxt.appTarget.id;
+            const filenames = [this.id + "-jsdoc", this.id];
+            const r: Map<string> = {};
+            if (pxt.Util.localizeLive && this.id != "this") {
+                pxt.log(`loading live translations for ${this.id}`)
+                const code = pxt.Util.userLanguage();
+                return Promise.all(filenames.map(
+                    fn => pxt.Util.downloadLiveTranslationsAsync(code, `${targetId}/${fn}-strings.json`)
+                        .then(tr => Util.jsonMergeFrom(r, tr))
+                        .catch(e => pxt.log(`error while downloading ${targetId}/${fn}-strings.json`)))
+                ).then(() => r);
+            }
 
-            [this.id + "-jsdoc", this.id].map(name => {
+            const files = this.config.files;
+            filenames.map(name => {
                 let fn = `_locales/${lang.toLowerCase()}/${name}-strings.json`;
                 if (files.indexOf(fn) > -1)
                     return JSON.parse(this.readFile(fn)) as Map<string>;
@@ -364,7 +456,7 @@ namespace pxt {
                 return undefined;
             }).filter(d => !!d).forEach(d => Util.jsonMergeFrom(r, d));
 
-            return r;
+            return Promise.resolve(r);
         }
     }
 
@@ -389,33 +481,32 @@ namespace pxt {
             let rec = (p: Package) => {
                 if (U.lookup(visited, p.id)) return;
                 visited[p.id] = true
-                let deps = Object.keys(p.config.dependencies)
-                deps.sort((a, b) => U.strcmp(a, b))
-                deps.forEach(id => rec(this.resolveDep(id)))
-                ids.push(p.id)
+                if (p.config && p.config.dependencies) {
+                    const deps = Object.keys(p.config.dependencies);
+                    deps.sort((a, b) => U.strcmp(a, b))
+                    deps.forEach(id => rec(this.resolveDep(id)))
+                    ids.push(p.id)
+                }
             }
             rec(this)
             return ids.map(id => this.resolveDep(id))
         }
 
-        localizationStrings(lang: string): Map<string> {
-            let loc: Map<string> = {};
-            Util.values(this.deps).forEach(dep => {
-                let depLoc = dep.packageLocalizationStrings(lang);
-                if (depLoc) // merge data
-                    for (let k in depLoc)
-                        if (!loc[k]) loc[k] = depLoc[k];
-            })
-            return loc;
+        localizationStringsAsync(lang: string): Promise<Map<string>> {
+            const loc: Map<string> = {};
+            return Promise.all(Util.values(this.deps).map(dep =>
+                dep.packageLocalizationStringsAsync(lang)
+                    .then(depLoc => {
+                        if (depLoc) // merge data
+                            for (let k in depLoc)
+                                if (!loc[k]) loc[k] = depLoc[k];
+                    })))
+                .then(() => loc);
         }
 
         getTargetOptions(): CompileTarget {
             let res = U.clone(appTarget.compile)
-            if (!res) res = { isNative: false, hasHex: false }
-            if (res.hasHex && res.jsRefCounting === undefined)
-                res.jsRefCounting = true
-            if (!res.hasHex && res.floatingPoint === undefined)
-                res.floatingPoint = true
+            U.assert(!!res)
             return res
         }
 
@@ -424,17 +515,27 @@ namespace pxt {
                 sourceFiles: [],
                 fileSystem: {},
                 target: target,
-                hexinfo: {}
+                hexinfo: { hex: [] }
             }
 
-            let generateFile = (fn: string, cont: string) => {
+            const generateFile = (fn: string, cont: string) => {
                 if (this.config.files.indexOf(fn) < 0)
                     U.userError(lf("please add '{0}' to \"files\" in {1}", fn, pxt.CONFIG_NAME))
                 cont = "// Auto-generated. Do not edit.\n" + cont + "\n// Auto-generated. Do not edit. Really.\n"
                 if (this.host().readFile(this, fn) !== cont) {
-                    pxt.debug(lf("updating {0} (size={1})...", fn, cont.length))
+                    pxt.debug(`updating ${fn} (size=${cont.length})...`)
                     this.host().writeFile(this, fn, cont)
                 }
+            }
+
+            const upgradeFile = (fn: string, cont: string) => {
+                let updatedCont = this.upgradeAPI(cont);
+                if (updatedCont != cont) {
+                    // save file (force write)
+                    pxt.debug(`updating APIs in ${fn} (size=${cont.length})...`)
+                    this.host().writeFile(this, fn, updatedCont, true)
+                }
+                return updatedCont;
             }
 
             return this.loadAsync()
@@ -443,7 +544,9 @@ namespace pxt {
                     let ext = cpp.getExtensionInfo(this)
                     if (ext.shimsDTS) generateFile("shims.d.ts", ext.shimsDTS)
                     if (ext.enumsDTS) generateFile("enums.d.ts", ext.enumsDTS)
-                    return (target.isNative ? this.host().getHexInfoAsync(ext) : Promise.resolve(null))
+                    return (target.isNative
+                        ? this.host().getHexInfoAsync(ext)
+                        : Promise.resolve<pxtc.HexInfo>(null))
                         .then(inf => {
                             ext = U.flatClone(ext)
                             delete ext.compileData;
@@ -453,19 +556,20 @@ namespace pxt {
                             opts.hexinfo = inf
                         })
                 })
-                .then(() => this.config.binaryonly ? null : this.filesToBePublishedAsync(true))
+                .then(() => this.config.binaryonly || appTarget.compile.shortPointers || !opts.target.isNative ? null : this.filesToBePublishedAsync(true))
                 .then(files => {
                     if (files) {
-                        let headerString = JSON.stringify({
+                        files = U.mapMap(files, upgradeFile);
+                        const headerString = JSON.stringify({
                             name: this.config.name,
                             comment: this.config.description,
                             status: "unpublished",
                             scriptId: this.config.installedVersion,
                             cloudId: pxt.CLOUD_ID + appTarget.id,
                             editor: target.preferredEditor ? target.preferredEditor : (U.lookup(files, "main.blocks") ? pxt.BLOCKS_PROJECT_NAME : pxt.JAVASCRIPT_PROJECT_NAME),
-                            targetVersion: pxt.appTarget.versions ? pxt.appTarget.versions.target : undefined
+                            targetVersions: pxt.appTarget.versions
                         })
-                        let programText = JSON.stringify(files)
+                        const programText = JSON.stringify(files)
                         return lzmaCompressAsync(headerString + programText)
                             .then(buf => {
                                 opts.embedMeta = JSON.stringify({
@@ -473,16 +577,19 @@ namespace pxt {
                                     headerSize: headerString.length,
                                     textSize: programText.length,
                                     name: this.config.name,
+                                    eURL: pxt.appTarget.appTheme.embedUrl,
+                                    eVER: pxt.appTarget.versions ? pxt.appTarget.versions.target : "",
+                                    pxtTarget: appTarget.id,
                                 })
                                 opts.embedBlob = btoa(U.uint8ArrayToString(buf))
-                            })
+                            });
                     } else {
                         return Promise.resolve()
                     }
                 })
                 .then(() => {
-                    for (let pkg of this.sortedDeps()) {
-                        for (let f of pkg.getFiles()) {
+                    for (const pkg of this.sortedDeps()) {
+                        for (const f of pkg.getFiles()) {
                             if (/\.(ts|asm)$/.test(f)) {
                                 let sn = f
                                 if (pkg.level > 0)
@@ -557,13 +664,24 @@ namespace pxt {
                             }
                         }
                     } catch (e) {
-                        pxt.reportError(lf("invalid pxtparts.json file"), undefined);
+                        pxt.reportError("parts", "invalid pxtparts.json file");
                     }
                 }
             })
             return res;
         }
 
+    }
+
+
+    let _targetConfig: pxt.TargetConfig = undefined;
+    export function targetConfigAsync(): Promise<pxt.TargetConfig> {
+        return _targetConfig ? Promise.resolve(_targetConfig)
+            : Cloud.privateGetAsync(`config/${pxt.appTarget.id}/targetconfig`)
+                .then(js => { _targetConfig = js; return _targetConfig; });
+    }
+    export function packagesConfigAsync(): Promise<pxt.PackagesConfig> {
+        return targetConfigAsync().then(config => config ? config.packages : undefined);
     }
 
     export const CONFIG_NAME = "pxt.json"

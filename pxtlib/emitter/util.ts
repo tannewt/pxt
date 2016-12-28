@@ -21,6 +21,18 @@ namespace ts.pxtc.Util {
         return r;
     }
 
+    export function listsEqual<T>(a: T[], b: T[]): boolean {
+        if (!a || !b || a.length !== b.length) {
+            return false;
+        }
+        for (let i = 0; i < a.length; i++) {
+            if (a[i] !== b[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     export function oops(msg = "OOPS"): Error {
         debugger
         throw new Error(msg)
@@ -107,7 +119,7 @@ namespace ts.pxtc.Util {
     export function jsonFlatten(v: any) {
         let res: pxt.Map<any> = {}
         let loop = (pref: string, v: any) => {
-            if (typeof v == "object") {
+            if (v !== null && typeof v == "object") {
                 assert(!Array.isArray(v))
                 if (pref) pref += "."
                 for (let k of Object.keys(v)) {
@@ -350,6 +362,7 @@ namespace ts.pxtc.Util {
         data?: any;
         headers?: pxt.Map<string>;
         allowHttpErrors?: boolean; // don't treat non-200 responses as errors
+        allowGzipPost?: boolean;
     }
 
     export interface HttpResponse {
@@ -525,7 +538,14 @@ namespace ts.pxtc.Util {
 
     let _localizeLang: string = "en";
     let _localizeStrings: pxt.Map<string> = {};
+    export var localizeLive = false;
 
+    /**
+     * Returns the current user language, prepended by "live-" if in live mode
+     */
+    export function localeInfo(): string {
+        return `${localizeLive ? "live-" : ""}${userLanguage()}`;
+    }
     /**
      * Returns current user language iSO-code. Default is `en`.
      */
@@ -541,10 +561,26 @@ namespace ts.pxtc.Util {
         return _localizeStrings[s] || s;
     }
 
-    export function updateLocalizationAsync(baseUrl: string, code: string): Promise<any> {
+    export function downloadLiveTranslationsAsync(lang: string, filename: string) {
+            return Util.httpGetJsonAsync(`https://www.pxt.io/api/translations?lang=${encodeURIComponent(lang)}&filename=${encodeURIComponent(filename)}`);
+    }
+
+    export function updateLocalizationAsync(baseUrl: string, code: string, live?: boolean): Promise<any> {
         // normalize code (keep synched with localized files)
         if (!/^(es|pt|zh)/i.test(code))
             code = code.split("-")[0]
+
+        if (live) {
+            console.log(`loading live translations for ${code}`)
+            return downloadLiveTranslationsAsync(code, "strings.json")
+                .then(tr => {
+                    _localizeStrings = tr || {};
+                    _localizeLang = code;
+                    localizeLive = true;
+                }, e => {
+                    console.error('failed to load localizations')
+                })
+        }
 
         if (_localizeLang != code) {
             return Util.httpGetJsonAsync(baseUrl + "locales/" + code + "/strings.json")
@@ -555,7 +591,7 @@ namespace ts.pxtc.Util {
                     console.error('failed to load localizations')
                 })
         }
-        //                    
+        //
         return Promise.resolve(undefined);
     }
 
@@ -625,8 +661,18 @@ namespace ts.pxtc.Util {
 
     export function fmt(f: string, ...args: any[]) { return fmt_va(f, args); }
 
+    const locStats: { [index: string]: number; } = {};
+    export function dumpLocStats() {
+        const r: { [index: string]: string; } = {};
+        Object.keys(locStats).sort((a, b) => locStats[b] - locStats[a])
+            .forEach(k => r[k] = k);
+        console.log('prioritized list of strings:')
+        console.log(JSON.stringify(r, null, 2));
+    }
+
     let sForPlural = true;
     export function lf_va(format: string, args: any[]): string {
+        locStats[format] = (locStats[format] || 0) + 1;
         let lfmt = Util._localize(format)
 
         if (!sForPlural && lfmt != format && /\d:s\}/.test(lfmt)) {
@@ -639,6 +685,12 @@ namespace ts.pxtc.Util {
     }
 
     export function lf(format: string, ...args: any[]): string {
+        return lf_va(format, args);
+    }
+    /**
+     * Similar to lf but the string do not get extracted into the loc file.
+     */
+    export function rlf(format: string, ...args: any[]): string {
         return lf_va(format, args);
     }
 
@@ -656,13 +708,46 @@ namespace ts.pxtc.Util {
         return r
     }
 
+    export function multipartPostAsync(uri: string, data: any = {}, filename: string = null, filecontents: string = null): Promise<HttpResponse> {
+        const boundry = "--------------------------0461489f461126c5"
+        let form = ""
+
+        function add(name: string, val: string) {
+            form += boundry + "\r\n"
+            form += "Content-Disposition: form-data; name=\"" + name + "\"\r\n\r\n"
+            form += val + "\r\n"
+        }
+
+        function addF(name: string, val: string) {
+            form += boundry + "\r\n"
+            form += "Content-Disposition: form-data; name=\"files[" + name + "]\"; filename=\"blah.json\"\r\n"
+            form += "\r\n"
+            form += val + "\r\n"
+        }
+
+        Object.keys(data).forEach(k => add(k, data[k]))
+        if (filename)
+            addF(filename, filecontents)
+
+        form += boundry + "--\r\n"
+
+        return Util.httpRequestCoreAsync({
+            url: uri,
+            method: "POST",
+            headers: {
+                "Content-Type": "multipart/form-data; boundary=" + boundry.slice(2)
+            },
+            data: form
+        })
+    }
+
     export function toDataUri(data: string, mimetype?: string): string {
         // TODO does this only support trusted data?
 
         // weed out urls
-        if (/^http?s:/i.test(data)) return data;
+        if (/^https?:/i.test(data)) return data;
 
-        // already a data uri?       
+        // already a data uri?
         if (/^data:/i.test(data)) return data;
 
         // infer mimetype
@@ -708,8 +793,8 @@ namespace ts.pxtc.BrowserImpl {
                         buffer: client.responseBody,
                         text: client.responseText,
                     }
-                    client.getAllResponseHeaders().split('\r\n').forEach(l => {
-                        let m = /^([^:]+): (.*)/.exec(l)
+                    client.getAllResponseHeaders().split(/\r?\n/).forEach(l => {
+                        let m = /^\s*([^:]+): (.*)/.exec(l)
                         if (m) res.headers[m[1].toLowerCase()] = m[2]
                     })
                     resolve(res)

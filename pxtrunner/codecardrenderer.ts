@@ -29,6 +29,7 @@ namespace pxt.docs.codeCard {
 
     export interface CodeCardRenderOptions {
         hideHeader?: boolean;
+        shortName?: boolean;
     }
 
     export function render(card: pxt.CodeCard, options: CodeCardRenderOptions = {}): HTMLElement {
@@ -67,7 +68,7 @@ namespace pxt.docs.codeCard {
             let hr = div(h, "right floated meta")
             if (card.any) div(hr, "ui grey circular label tiny", "i", card.any > 0 ? card.any : "");
             repeat(card.blocks, (k) => div(hr, "puzzle orange icon", "i"));
-            repeat(card.javascript, (k) => div(hr, "keyboard blue icon", "i"));
+            repeat(card.javascript, (k) => div(hr, "align left blue icon", "i"));
             repeat(card.hardware, (k) => div(hr, "certificate black icon", "i"));
             repeat(card.software, (k) => div(hr, "square teal icon", "i"));
 
@@ -109,9 +110,10 @@ namespace pxt.docs.codeCard {
 
 
         let ct = div(r, "ui content");
-        if (card.name) {
-            if (url && !link) a(ct, url, card.name, 'header');
-            else div(ct, 'header', 'div', card.name);
+        const name = (options.shortName ? card.shortName : '') || card.name;
+        if (name) {
+            if (url && !link) a(ct, url, name, 'header');
+            else div(ct, 'header', 'div', name);
         }
         if (card.time) {
             let meta = div(ct, "ui meta");

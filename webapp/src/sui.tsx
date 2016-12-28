@@ -10,6 +10,7 @@ export interface UiProps {
     children?: any;
     class?: string;
     role?: string;
+    title?: string;
 }
 
 export interface WithPopupProps extends UiProps {
@@ -22,14 +23,14 @@ export interface DropdownProps extends WithPopupProps {
     onChange?: (v: string) => void;
 }
 
-function genericClassName(cls: string, props: UiProps) {
-    return cls + " " + (props.icon ? " icon" : "") + " " + (props.class || "")
+function genericClassName(cls: string, props: UiProps, ignoreIcon: boolean = false): string {
+    return `${cls} ${ignoreIcon ? '' : props.icon && props.text ? 'icon-and-text' : props.icon ? 'icon' : ""} ${props.class || ""}`;
 }
 
 function genericContent(props: UiProps) {
     return [
         props.icon ? (<i key='iconkey' className={props.icon + " icon " + (props.text ? " icon-and-text " : "") + (props.iconClass ? " " + props.iconClass : '') }></i>) : null,
-        props.text ? (<span key='textkey' className={'text' + (props.textClass ? ' ' + props.textClass : '') }>{props.text}</span>) : null
+        props.text ? (<span key='textkey' className={'ui text' + (props.textClass ? ' ' + props.textClass : '') }>{props.text}</span>) : null,
     ]
 }
 
@@ -59,7 +60,7 @@ export class UiElement<T extends WithPopupProps> extends data.Component<T, {}> {
 
 }
 
-export class DropdownMenu extends UiElement<DropdownProps> {
+export class DropdownMenuItem extends UiElement<DropdownProps> {
     componentDidMount() {
         this.popup()
         this.child("").dropdown({
@@ -80,29 +81,10 @@ export class DropdownMenu extends UiElement<DropdownProps> {
 
     renderCore() {
         return (
-            <div className={genericClassName("ui dropdown", this.props) } role={this.props.role} title={this.props.title ? this.props.title : this.props.text}>
+            <div className={genericClassName("ui dropdown item", this.props) }
+                role={this.props.role}
+                title={this.props.title}>
                 {genericContent(this.props) }
-                <div className="menu">
-                    {this.props.children}
-                </div>
-            </div>);
-    }
-}
-
-export class DropdownList extends DropdownMenu {
-
-    componentDidUpdate() {
-        this.child("").dropdown('set selected', this.props.value)
-        super.componentDidUpdate()
-    }
-
-    renderCore() {
-        return (
-            <div className={genericClassName("ui dropdown", this.props) }>
-                <input type="hidden" name="mydropdown"/>
-                {this.props.icon ? null : (<i className="dropdown icon"></i>) }
-                {genericContent(this.props) }
-                <div className="default text"></div>
                 <div className="menu">
                     {this.props.children}
                 </div>
@@ -111,6 +93,7 @@ export class DropdownList extends DropdownMenu {
 }
 
 export interface ItemProps extends UiProps {
+    active?: boolean;
     value?: string;
     onClick?: () => void;
 }
@@ -118,9 +101,9 @@ export interface ItemProps extends UiProps {
 export class Item extends data.Component<ItemProps, {}> {
     renderCore() {
         return (
-            <div className={genericClassName("ui item", this.props) }
+            <div className={genericClassName("ui item link", this.props, true) + ` ${this.props.active ? 'active' : ''}` }
                 role={this.props.role}
-                title={this.props.text}
+                title={this.props.title}
                 key={this.props.value}
                 data-value={this.props.value}
                 onClick={this.props.onClick}>
@@ -141,7 +124,7 @@ export class Button extends UiElement<ButtonProps> {
         return (
             <button className={genericClassName("ui button", this.props) + " " + (this.props.disabled ? "disabled" : "") }
                 role={this.props.role}
-                title={this.props.title ? this.props.title : this.props.text}
+                title={this.props.title}
                 onClick={this.props.onClick}>
                 {genericContent(this.props) }
                 {this.props.children}
@@ -259,15 +242,36 @@ export class Input extends data.Component<{
     }
 }
 
+export class Checkbox extends data.Component<{
+    label?: string;
+    inputLabel?: string;
+    class?: string;
+    checked?: boolean;
+    onChange: (v: string) => void;
+}, {}> {
+
+    renderCore() {
+        const p = this.props;
+        return <Field label={p.label}>
+            <div className={"ui toggle checkbox"}>
+                <input type="checkbox" checked={p.checked}
+                    onChange={v => p.onChange((v.target as any).value) } />
+                {p.inputLabel ? <label>{p.inputLabel}</label> : undefined }
+            </div>
+        </Field>;
+    }
+}
+
 export interface ModalProps {
     children?: any;
     addClass?: string;
     headerClass?: string;
     header: string;
+    onHide: () => void;
+    visible?: boolean;
 }
 
 export interface ModalState {
-    visible?: boolean;
 }
 
 export class Modal extends data.Component<ModalProps, ModalState> {
@@ -277,16 +281,12 @@ export class Modal extends data.Component<ModalProps, ModalState> {
         this.id = Util.guidGen();
     }
 
-    show() {
-        this.setState({ visible: true })
-    }
-
     hide() {
-        this.setState({ visible: false })
+        this.props.onHide();
     }
 
     renderCore() {
-        if (!this.state.visible) return null;
+        if (!this.props.visible) return null;
         return (
             <div id={this.id} className={`ui mydimmer dimmer modals page ${pxt.options.light ? "" : "transition"} visible active`} onClick={ev => {
                 if (/mydimmer/.test((ev.target as HTMLElement).className))

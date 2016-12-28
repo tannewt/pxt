@@ -5,16 +5,20 @@ CACHE:
 /cdn/main.js
 /cdn/typescript.js
 /cdn/marked/marked.min.js
+/cdn/highlight.js/highlight.pack.js
 /cdn/lzma/lzma_worker-min.js
 /cdn/jquery.js
 /cdn/pxtlib.js
 /cdn/pxtblocks.js
+/cdn/pxtwinrt.js
 /cdn/pxteditor.js
 /cdn/pxtsim.js
 /cdn/semantic.css
 /cdn/custom.css
 /cdn/icons.css
 /cdn/fonts/icons.woff2
+@defaultLocaleStrings@
+@cachedHexFiles@
 
 # blockly
 /cdn/blockly/blockly_compressed.js
@@ -47,12 +51,12 @@ CACHE:
 /cdn/vs/language/typescript/src/worker.js
 /cdn/monacoworker.js
 
+# ai
+https://az416426.vo.msecnd.net/scripts/a/ai.0.js
+
 @workerjs@
 
-/sim/target.json
-
-# External
-https://cdn.mxpnl.com/libs/mixpanel-2-latest.min.js
+/sim/target.js
   
 NETWORK:
 *

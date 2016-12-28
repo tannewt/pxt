@@ -21,8 +21,9 @@ let simdirs = [""]
 let docfilesdirs = [""]
 let userProjectsDir = path.join(process.cwd(), userProjectsDirName);
 let docsDir = ""
-let tempDir = ""
 let packagedDir = ""
+let localHexDir = path.join("built", "hexcache");
+let electronHandlers: pxt.Map<ElectronHandler> = {};
 
 export function forkPref() {
     if (pxt.appTarget.forkof)
@@ -43,21 +44,31 @@ function forkDirs(lst: string[]) {
 }
 
 function setupDocfilesdirs() {
-    docfilesdirs = ["docfiles", path.join(nodeutil.pxtCoreDir, "docfiles"), path.join(nodeutil.pxtCoreDir, "docfiles")]
-    console.log('docfilesdir: ', docfilesdirs.join(', '))
+    docfilesdirs = [
+        "docfiles",
+        path.join(nodeutil.pxtCoreDir, "docfiles")
+    ]
 }
 
 function setupRootDir() {
     root = nodeutil.targetDir
     console.log("Starting server in", root)
     console.log(`With pxt core at ${nodeutil.pxtCoreDir}`)
-    dirs = [path.join(nodeutil.pxtCoreDir, "built/web"), path.join(nodeutil.pxtCoreDir, "webapp/public")]
+    dirs = [
+        "built/web",
+        path.join(nodeutil.pxtCoreDir, "built/web"),
+        path.join(nodeutil.pxtCoreDir, "webapp/public")
+    ]
     simdirs = [path.join(nodeutil.targetDir, "built"), path.join(nodeutil.targetDir, "sim/public")]
     docsDir = path.join(root, "docs")
-    tempDir = path.join(root, "built/docstmp")
     packagedDir = path.join(root, "built/packaged")
     setupDocfilesdirs()
     setupProjectsDir()
+
+    pxt.debug(`docs dir:\r\n    ${docsDir}`)
+    pxt.debug(`doc files dir: \r\n    ${docfilesdirs.join("\r\n    ")}`)
+    pxt.debug(`dirs:\r\n    ${dirs.join('\r\n    ')}`)
+    pxt.debug(`projects dir: ${userProjectsDir}`);
 }
 
 function setupProjectsDir() {
@@ -91,28 +102,13 @@ function setupProjectsDir() {
     nodeutil.mkdirP(userProjectsDir);
 }
 
-let statAsync = Promise.promisify(fs.stat)
-let readdirAsync = Promise.promisify(fs.readdir)
-let readFileAsync = Promise.promisify(fs.readFile)
-let writeFileAsync: any = Promise.promisify(fs.writeFile)
+const statAsync = Promise.promisify(fs.stat)
+const readdirAsync = Promise.promisify(fs.readdir)
+const readFileAsync = Promise.promisify(fs.readFile)
+const writeFileAsync: any = Promise.promisify(fs.writeFile)
 
-// provided by target
-let deployCoreAsync: (r: pxtc.CompileResult) => void = undefined;
-
-function initTargetCommands() {
-    let cmdsjs = path.resolve('built/cmds.js');
-    if (fs.existsSync(cmdsjs)) {
-        pxt.debug(`loading cli extensions...`)
-        let cli = require(cmdsjs)
-        if (cli.deployCoreAsync) {
-            pxt.debug('imported deploy command')
-            deployCoreAsync = cli.deployCoreAsync
-        }
-    }
-}
-
-function existsAsync(fn: string) {
-    return new Promise((resolve, reject) => {
+function existsAsync(fn: string): Promise<boolean> {
+    return new Promise<boolean>((resolve, reject) => {
         fs.exists(fn, resolve)
     })
 }
@@ -133,6 +129,7 @@ type FsPkg = pxt.FsPkg;
 
 function readPkgAsync(logicalDirname: string, fileContents = false): Promise<FsPkg> {
     let dirname = path.join(userProjectsDir, logicalDirname)
+    let r: FsPkg = undefined;
     return readFileAsync(path.join(dirname, pxt.CONFIG_NAME))
         .then(buf => {
             let cfg: pxt.PackageConfig = JSON.parse(buf.toString("utf8"))
@@ -154,17 +151,43 @@ function readPkgAsync(logicalDirname: string, fileContents = false): Promise<FsP
                                 })
                     }))
                 .then(files => {
-                    return {
+                    r = {
                         path: logicalDirname,
                         config: cfg,
                         files: files
-                    }
+                    };
+                    return existsAsync(path.join(dirname, "icon.jpeg"));
+                }).then(icon => {
+                    r.icon = icon ? "/icon/" + logicalDirname : undefined;
+                    return r;
                 })
         })
 }
 
+function writeScreenshotAsync(logicalDirname: string, screenshotUri: string, iconUri: string) {
+    console.log('writing screenshot...');
+    const dirname = path.join(userProjectsDir, logicalDirname)
+    nodeutil.mkdirP(dirname)
+
+    function writeUriAsync(name: string, uri: string) {
+        if (!uri) return Promise.resolve();
+        const m = uri.match(/^data:image\/(png|jpeg);base64,(.*)$/);
+        if (!m) return Promise.resolve();
+        const ext = m[1];
+        const data = m[2];
+        const fn = path.join(dirname, name + "." + ext);
+        console.log(`writing ${fn}`)
+        return writeFileAsync(fn, new Buffer(data, 'base64'));
+    }
+
+    return Promise.all([
+        writeUriAsync("screenshot", screenshotUri),
+        writeUriAsync("icon", iconUri)
+    ]).then(() => { });
+}
+
 function writePkgAsync(logicalDirname: string, data: FsPkg) {
-    let dirname = path.join(userProjectsDir, logicalDirname)
+    const dirname = path.join(userProjectsDir, logicalDirname)
 
     nodeutil.mkdirP(dirname)
 
@@ -219,14 +242,40 @@ function isAuthorizedLocalRequest(req: http.IncomingMessage): boolean {
         && req.headers["authorization"] == serveOptions.localToken;
 }
 
-function handleApiAsync(req: http.IncomingMessage, res: http.ServerResponse, elts: string[]): Promise<any> {
-    let opts: pxt.Map<string> = querystring.parse(url.parse(req.url).query)
-    let innerPath = elts.slice(2).join("/").replace(/^\//, "")
-    let filename = path.resolve(path.join(userProjectsDir, innerPath))
-    let meth = req.method.toUpperCase()
-    let cmd = meth + " " + elts[1]
+function getCachedHexAsync(sha: string): Promise<any> {
+    if (!sha) {
+        return Promise.resolve();
+    }
 
-    let readJsonAsync = () =>
+    let hexFile = path.resolve(localHexDir, sha + ".hex");
+
+    return existsAsync(hexFile)
+        .then((results) => {
+            if (!results) {
+                console.log(`offline HEX not found: ${hexFile}`);
+                return Promise.resolve(null);
+            }
+
+            console.log(`serving HEX from offline cache: ${hexFile}`);
+            return readFileAsync(hexFile)
+                .then((fileContent) => {
+                    return {
+                        enums: [],
+                        functions: [],
+                        hex: fileContent.toString()
+                    };
+                });
+        });
+}
+
+function handleApiAsync(req: http.IncomingMessage, res: http.ServerResponse, elts: string[]): Promise<any> {
+    const opts: pxt.Map<string> = querystring.parse(url.parse(req.url).query)
+    const innerPath = elts.slice(2).join("/").replace(/^\//, "")
+    const filename = path.resolve(path.join(userProjectsDir, innerPath))
+    const meth = req.method.toUpperCase()
+    const cmd = meth + " " + elts[1]
+
+    const readJsonAsync = () =>
         nodeutil.readResAsync(req)
             .then(buf => JSON.parse(buf.toString("utf8")))
 
@@ -250,13 +299,38 @@ function handleApiAsync(req: http.IncomingMessage, res: http.ServerResponse, elt
     else if (cmd == "POST pkg")
         return readJsonAsync()
             .then(d => writePkgAsync(innerPath, d))
-    else if (cmd == "POST deploy" && deployCoreAsync)
+    else if (cmd == "POST deploy" && pxt.commands.deployCoreAsync)
         return readJsonAsync()
-            .then(d => deployCoreAsync(d))
-            .catch((e) => {
-                throwError(404, "Board not found");
+            .then(pxt.commands.deployCoreAsync)
+            .then((boardCount) => {
+                return {
+                    boardCount: boardCount
+                };
             });
-    else throw throwError(400)
+    else if (cmd == "POST screenshot")
+        return readJsonAsync()
+            .then(d => writeScreenshotAsync(innerPath, d.screenshot, d.icon));
+    else if (cmd == "GET compile")
+        return getCachedHexAsync(innerPath)
+            .then((res) => {
+                if (!res) {
+                    return {
+                        notInOfflineCache: true
+                    };
+                }
+
+                return res;
+            });
+    else if (cmd == "GET md" && pxt.appTarget.id + "/" == innerPath.slice(0, pxt.appTarget.id.length + 1)) {
+        // innerpath start with targetid
+        const fmd = path.join(docsDir, innerPath.slice(pxt.appTarget.id.length + 1) + ".md");
+        return existsAsync(fmd)
+            .then(e => {
+                if (!e) throw throwError(404);
+                return readFileAsync(fmd).then(buffer => buffer.toString("utf8"));
+            });
+    }
+    else throw throwError(400, `unknown command ${cmd.slice(0, 140)}`)
 }
 
 function directoryExistsSync(p: string): boolean {
@@ -292,10 +366,16 @@ export function lookupDocFile(name: string) {
 export function expandHtml(html: string) {
     let theme = U.flatClone(pxt.appTarget.appTheme)
     html = expandDocTemplateCore(html)
-    let params: pxt.Map<string> = {}
-    let m = /<title>([^<>]*)<\/title>/.exec(html)
+    let params: pxt.Map<string> = {
+        name: pxt.appTarget.appTheme.title,
+        description: pxt.appTarget.appTheme.description,
+        locale: pxt.appTarget.appTheme.defaultLocale || "en"
+    };
+
+    // page overrides
+    let m = /<title>([^<>@]*)<\/title>/.exec(html)
     if (m) params["name"] = m[1]
-    m = /<meta name="Description" content="([^"]*)"/.exec(html)
+    m = /<meta name="Description" content="([^"@]*)"/.exec(html)
     if (m) params["description"] = m[1]
     let d: pxt.docs.RenderData = {
         html: html,
@@ -337,10 +417,13 @@ interface SerialPortInfo {
 }
 
 let wsSerialClients: WebSocket[] = [];
-let serialPorts: pxt.Map<SerialPortInfo> = {}
+let serialPorts: pxt.Map<SerialPortInfo> = {};
+let electronSocket: WebSocket = null;
+let webappReady = false;
+let electronPendingMessages: ElectronMessage[] = [];
 
-function initSocketServer() {
-    console.log('starting local ws server at 3233...')
+function initSocketServer(wsPort: number) {
+    console.log(`starting local ws server at ${wsPort}...`)
     const WebSocket = require('faye-websocket');
 
     function startSerial(request: any, socket: any, body: any) {
@@ -425,6 +508,30 @@ function initSocketServer() {
         })
     }
 
+    function startElectronChannel(request: any, socket: any, body: any) {
+        electronSocket = new WebSocket(request, socket, body);
+        electronSocket.onmessage = function (event: any) {
+            let messageInfo = JSON.parse(event.data) as ElectronMessage;
+
+            if (messageInfo.type === "ready") {
+                webappReady = true;
+                electronPendingMessages.forEach((m) => {
+                    sendElectronMessage(m);
+                });
+            } else if (electronHandlers[messageInfo.type]) {
+                electronHandlers[messageInfo.type](messageInfo.args);
+            }
+        };
+        electronSocket.onclose = function (event: any) {
+            console.log('Electron socket connection closed')
+            electronSocket = null;
+        };
+        electronSocket.onerror = function () {
+            console.log('Electron socket connection closed')
+            electronSocket = null;
+        };
+    }
+
     let wsserver = http.createServer();
     wsserver.on('upgrade', function (request: http.IncomingMessage, socket: WebSocket, body: any) {
         try {
@@ -434,6 +541,8 @@ function initSocketServer() {
                     startSerial(request, socket, body);
                 else if (request.url == "/" + serveOptions.localToken + "/debug")
                     startDebug(request, socket, body);
+                else if (request.url == "/" + serveOptions.localToken + "/electron")
+                    startElectronChannel(request, socket, body);
                 else console.log('refused connection at ' + request.url);
             }
         } catch (e) {
@@ -441,16 +550,24 @@ function initSocketServer() {
         }
     });
 
-    wsserver.listen(3233, "127.0.0.1");
+    return new Promise<void>((resolve, reject) => {
+        wsserver.on("Error", reject);
+        wsserver.listen(wsPort, "127.0.0.1", () => resolve());
+    });
 }
 
 function initSerialMonitor() {
     if (!pxt.appTarget.serial || !pxt.appTarget.serial.log) return;
 
     console.log('serial: monitoring ports...')
-    initSocketServer();
 
-    const SerialPort = require("serialport");
+    let SerialPort: any;
+    try {
+        SerialPort = require("serialport");
+    } catch (er) {
+        console.warn('serial: failed to load, skipping...');
+        return;
+    }
 
     function close(info: SerialPortInfo) {
         console.log('serial: closing ' + info.pnpId);
@@ -505,8 +622,8 @@ function initSerialMonitor() {
     }, 5000);
 }
 
-function openUrl(startUrl: string) {
-    if (!/^[a-z0-9A-Z#=\.\-\\\/%:\?_]+$/.test(startUrl)) {
+function openUrl(startUrl: string, browser: string) {
+    if (!/^[a-z0-9A-Z#=\.\-\\\/%:\?_&]+$/.test(startUrl)) {
         console.error("invalid URL to open: " + startUrl)
         return
     }
@@ -520,46 +637,123 @@ function openUrl(startUrl: string) {
     else
         startUrl = startUrl.replace('\\', '/');
 
-    let cmd = cmds[process.platform];
     console.log(`opening ${startUrl}`)
-    child_process.exec(`${cmd} ${startUrl}`);
+
+    if (browser) {
+        child_process.spawn(getBrowserLocation(browser), [startUrl]);
+    }
+    else {
+        child_process.exec(`${cmds[process.platform]} ${startUrl}`);
+    }
 }
+
+function getBrowserLocation(browser: string) {
+    let browserPath: string;
+
+    const normalizedBrowser = browser.toLowerCase();
+
+    if (normalizedBrowser === "chrome") {
+        switch (os.platform()) {
+            case "win32":
+            case "win64":
+                browserPath = "C:/Program Files (x86)/Google/Chrome/Application/chrome.exe";
+                break;
+            case "darwin":
+                browserPath = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+                break;
+            case "linux":
+                browserPath = "/opt/google/chrome/chrome";
+                break;
+            default:
+                break;
+        }
+    }
+    else if (normalizedBrowser === "firefox") {
+        browserPath = "C:/Program Files (x86)/Mozilla Firefox/firefox.exe";
+        switch (os.platform()) {
+            case "win32":
+            case "win64":
+                browserPath = "C:/Program Files (x86)/Mozilla Firefox/firefox.exe";
+                break;
+            case "darwin":
+                browserPath = "/Applications/Firefox.app";
+                break;
+            case "linux":
+            default:
+                break;
+        }
+    }
+    else if (normalizedBrowser === "ie") {
+        browserPath = "C:/Program Files/Internet Explorer/iexplore.exe";
+    }
+    else if (normalizedBrowser === "safari") {
+        browserPath = "/Applications/Safari.app/Contents/MacOS/Safari";
+    }
+
+    if (browserPath && fs.existsSync(browserPath)) {
+        return browserPath;
+    }
+
+    return browser;
+}
+
+export interface ElectronMessage {
+    type: string;
+    args?: any
+}
+export interface ElectronHandler { (args?: any): void }
 
 export interface ServeOptions {
     localToken: string;
     autoStart: boolean;
     packaged?: boolean;
     electron?: boolean;
+    browser?: string;
+    electronHandlers?: pxt.Map<ElectronHandler>;
+    port?: number;
+    wsPort?: number;
+    serial?: boolean;
+}
+
+export function sendElectronMessage(message: ElectronMessage) {
+    if (!webappReady) {
+        electronPendingMessages.push(message);
+        return;
+    }
+
+    electronSocket.send(JSON.stringify(message));
 }
 
 let serveOptions: ServeOptions;
 export function serveAsync(options: ServeOptions) {
     serveOptions = options;
-
+    if (!serveOptions.port) serveOptions.port = 3232;
+    if (!serveOptions.wsPort) serveOptions.wsPort = 3233;
     setupRootDir();
+    const wsServerPromise = initSocketServer(serveOptions.wsPort);
+    if (serveOptions.serial)
+        initSerialMonitor();
+    if (serveOptions.electronHandlers) {
+        electronHandlers = serveOptions.electronHandlers;
+    }
 
-    nodeutil.mkdirP(tempDir)
-
-    initTargetCommands()
-    initSerialMonitor();
-
-    let server = http.createServer((req, res) => {
-        let error = (code: number, msg: string = null) => {
+    const server = http.createServer((req, res) => {
+        const error = (code: number, msg: string = null) => {
             res.writeHead(code, { "Content-Type": "text/plain" })
             res.end(msg || "Error " + code)
         }
 
-        let sendJson = (v: any) => {
+        const sendJson = (v: any) => {
             res.writeHead(200, { 'Content-Type': 'application/json; charset=utf8' })
             res.end(JSON.stringify(v))
         }
 
-        let sendHtml = (s: string) => {
+        const sendHtml = (s: string) => {
             res.writeHead(200, { 'Content-Type': 'text/html; charset=utf8' })
             res.end(s)
         }
 
-        let sendFile = (filename: string) => {
+        const sendFile = (filename: string) => {
             try {
                 let stat = fs.statSync(filename);
 
@@ -606,6 +800,12 @@ export function serveAsync(options: ServeOptions) {
                 })
         }
 
+        if (elts[0] == "icon") {
+            const name = path.join(userProjectsDir, elts[1], "icon.jpeg");
+            return existsAsync(name)
+                .then(exists => exists ? sendFile(name) : error(404));
+        }
+
         if (options.packaged) {
             let filename = path.resolve(path.join(packagedDir, pathname))
             if (fileExistsSync(filename)) {
@@ -638,9 +838,12 @@ export function serveAsync(options: ServeOptions) {
             return
         }
 
-        if (!/\.js\.map$/.test(pathname)) {
+        if (!/\.js\.map$/.test(pathname) || pathname == "/cdn/target.js") {
             let dd = dirs
-            if (U.startsWith(pathname, "/sim/")) {
+            if (pathname == "/cdn/target.js") {
+                pathname = pathname.slice(4)
+                dd = simdirs
+            } else if (U.startsWith(pathname, "/sim/")) {
                 pathname = pathname.slice(4)
                 dd = simdirs
             } else if (U.startsWith(pathname, "/parts/")) {
@@ -699,23 +902,29 @@ export function serveAsync(options: ServeOptions) {
     });
 
     // if user has a server.js file, require it
-    let serverjs = path.resolve(path.join(root, 'server.js'))
+    const serverjs = path.resolve(path.join(root, 'built', 'server.js'))
     if (fileExistsSync(serverjs)) {
         console.log('loading ' + serverjs)
         require(serverjs);
     }
 
-    server.listen(3232, "127.0.0.1");
+    const serverPromise = new Promise<void>((resolve, reject) => {
+        server.on("error", reject);
+        server.listen(serveOptions.port, "127.0.0.1", () => resolve());
+    });
 
-    let start = `http://localhost:3232/#local_token=${options.localToken}`;
-    console.log(`---------------------------------------------`);
-    console.log(``);
-    console.log(`To launch the editor, open this URL:`);
-    console.log(start);
-    console.log(``);
-    console.log(`---------------------------------------------`);
-    if (options.autoStart)
-        openUrl(start);
+    return Promise.all([wsServerPromise, serverPromise])
+        .then(() => {
+            let start = `http://localhost:${serveOptions.port}/#ws=${serveOptions.wsPort}&local_token=${options.localToken}`;
+            console.log(`---------------------------------------------`);
+            console.log(``);
+            console.log(`To launch the editor, open this URL:`);
+            console.log(start);
+            console.log(``);
+            console.log(`---------------------------------------------`);
 
-    return new Promise<void>((resolve, reject) => { })
+            if (options.autoStart) {
+                openUrl(start, options.browser);
+            }
+        });
 }

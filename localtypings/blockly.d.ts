@@ -30,10 +30,17 @@ declare namespace goog {
 declare namespace Blockly {
     let selected: any;
     function bindEvent_(node: any, eventName: string, target: any, fn: (e: any) => void): void;
-    function fireUiEvent(node: any, eventName: string): void;
     function genUid(): string;
     function terminateDrag_(): void;
     function mouseToSvg(e: Event, svg: Element): any;
+    function svgResize(workspace: Blockly.Workspace): void;
+    function hueToRgb(hue: number): string;
+
+    function registerButtonCallback(key: string, func: (button: Blockly.FlyoutButton) => void): void;
+
+    function alert(message: string, opt_callback?: () => void): void;
+    function confirm(message: string, callback: (response: boolean) => void): void;
+    function prompt(message: string, defaultValue: string, callback: (response: string) => void): void;
 
     let ALIGN_RIGHT: number;
 
@@ -54,8 +61,13 @@ declare namespace Blockly {
     }
 
     class Field {
+        name: string;
+        EDITABLE: boolean;
         init(block: Block): void;
         static superClass_: Field;
+        getText(): string;
+        setText(newText: any): void;
+        updateEditable(): void;
     }
 
     class FieldVariable extends Field {
@@ -83,14 +95,18 @@ declare namespace Blockly {
         type: string;
         id: string;
         isShadow_: boolean;
+        nextConnection: Connection;
+        outputConnection: Connection;
+        previousConnection: Connection;
+        workspace: Workspace;
+
 
         // Returns null if the field does not exist on the specified block.
         getFieldValue(field: string): string;
-        setFieldValue(newValue: string, field: string): void;
-        setWarningText(text: string): void;
         // Returns null if the input does not exist on the specified block, or
         // is disconnected.
         getInputTargetBlock(field: string): Block;
+        getInputsInline(): boolean;
         // Returns null if no next block or is disconnected.
         getNextBlock(): Block;
         // Unplug this block from its superior block.  If this block is a statement, optionally reconnect the block underneath with the block on top.
@@ -102,7 +118,6 @@ declare namespace Blockly {
             topLeft: goog.math.Coordinate;
             bottomRight: goog.math.Coordinate;
         }
-        outputConnection: Connection;
 
         getSurroundParent(): Block;
 
@@ -111,23 +126,65 @@ declare namespace Blockly {
         inputList: Input[];
         disabled: boolean;
         comment: string | Comment;
+
+        appendDummyInput(opt_name?: string): Input;
+        appendStatementInput(name: string): Input;
+        appendValueInput(name: string): Input;
+        getChildren(): Block[];
+        getColour(): string;
+        getDescendants(): Block[];
+        initSvg(): void;
+        removeInput(name: string, opt_quiet?: boolean): void;
         dispose(healGap: boolean): void;
+        setCollapsed(collapsed: boolean): void;
+        setColour(colour: number | string): void;
+        setCommentText(text: string): void;
+        setConnectionsHidden(hidden: boolean): void;
+        setDeletable(deletable: boolean): void;
+        setDisabled(disabled: boolean): void;
+        setEditable(editable: boolean): void;
+        setFieldValue(newValue: string, name: string): void;
+        setHelpUrl(url: string): void;
+        setInputsInline(newBoolean: boolean): void;
+        setMovable(movable: boolean): void;
+        setMutator(mutator: Mutator): void;
+        setNextStatement(newBoolean: boolean, opt_check?: string | string[]): void;
+        setOutput(newBoolean: boolean, opt_check?: string | string[]): void;
+        setParent(newParent: Block): void;
+        setPreviousStatement(newBoolean: boolean, opt_check?: string | string[]): void;
+        setShadow(shadow: boolean): void;
+        setTitleValue(newValue: string, name: string): void;
+        setTooltip(newTip: string | (() => void)): void;
+        // Passing null will delete current text
+        setWarningText(text: string): void;
     }
 
-    class Comment {
+    class Comment extends Icon {
         constructor(b: Block);
+
+        dispose(): void;
+        getBubbleSize(): { width: number, height: number };
+        getText(): string;
+        setBubbleSize(width: number, height: number): void;
+        setText(text: string): void;
+    }
+
+    class Warning extends Icon {
+    }
+
+    class Icon {
+        constructor(block: Block);
+
+        collapseHidden: boolean;
+
         computeIconLocation(): void;
         createIcon(): void;
         dispose(): void;
-        getBubbleSize(): { width: number, height: number };
-        getIconLocation(): { x: number, y: number }
-        getText(): string;
+        getIconLocation(): goog.math.Coordinate;
         isVisible(): boolean;
-        renderIcon(cursorX: number): number;
-        setBubbleSize(width: number, height: number): void;
-        setIconLocation(xy: { x: number, y: number }): void;
-        setText(text: string): void;
         setVisible(visible: boolean): void;
+        renderIcon(cursorX: number): number;
+        setIconLocation(xy: goog.math.Coordinate): void;
         updateColour(): void;
         updateEditable(): void;
     }
@@ -143,6 +200,17 @@ declare namespace Blockly {
         name: string;
         connection: Connection;
         sourceBlock_: Block;
+        fieldRow: Field[];
+
+        appendField(field: Field | string, opt_name?: string): Input;
+        appendTitle(field: any, opt_name?: string): Input;
+        dispose(): void;
+        init(): void;
+        isVisible(): boolean;
+        removeField(name: string): void;
+        setAlign(align: number): Input;
+        setCheck(check: string | string[]): Input;
+        setVisible(visible: boolean): Block;
     }
 
     class Connection {
@@ -151,6 +219,7 @@ declare namespace Blockly {
         targetConnection: Connection;
         sourceBlock_: Block;
         targetBlock(): Block;
+        connect(otherConnection: Connection): void;
     }
 
     // if type is one of "procedures_def{,no}return", or "procedures_call{,no}return"
@@ -171,6 +240,20 @@ declare namespace Blockly {
         group?: string;
     }
 
+    class FlyoutButton {
+        getTargetWorkspace(): Blockly.Workspace;
+    }
+
+    class Mutator extends Icon {
+        /**
+         * @param quarkNames: list of sub_blocks for toolbox in mutator workspace
+         */
+        constructor(quarkNames: string[]);
+
+        reconnect(connectionChild: Connection, block: Block, inputName: string): boolean;
+        dispose(): void;
+    }
+
     class ScrollbarPair {
         hScroll: Scrollbar;
         vScroll: Scrollbar;
@@ -178,7 +261,7 @@ declare namespace Blockly {
     }
 
     class Scrollbar {
-        svgKnob_: Element;
+        svgHandle_: Element;
         ratio_: number;
         set(x: number): void;
     }
@@ -188,6 +271,7 @@ declare namespace Blockly {
         scrollbar: ScrollbarPair;
         svgBlockCanvas_: SVGGElement;
 
+        newBlock(prototypeName: string, opt_id?: string): Block;
         render(): void;
         clear(): void;
         dispose(): void;
@@ -205,6 +289,7 @@ declare namespace Blockly {
         undo(): void;
         redo(): void;
         clearUndo(): void;
+        isDragging(): boolean;
         getMetrics(): {
             absoluteLeft: number;
             absoluteTop: number;
@@ -219,10 +304,15 @@ declare namespace Blockly {
         }
     }
 
+    class WorkspaceSvg {
+        moveDrag(e: Event): goog.math.Coordinate;
+        showContextMenu_(e: Event): void;
+    }
+
     namespace Xml {
         function domToText(dom: Element): string;
         function domToPrettyText(dom: Element): string;
-        function domToWorkspace(workspace: Workspace, dom: Element): void;
+        function domToWorkspace(dom: Element, workspace: Workspace): void;
         function textToDom(text: string): Element;
         function workspaceToDom(workspace: Workspace): Element;
     }
@@ -270,6 +360,7 @@ declare namespace Blockly {
     namespace Variables {
         function allVariables(wp: Workspace): string[];
         let flyoutCategory: (wp: Workspace) => HTMLElement[];
+        function createVariable(wp: Workspace, opt_callback?: ((e: any) => void)): void;
     }
 
     namespace ContextMenu {
@@ -308,6 +399,11 @@ declare namespace Blockly {
         const MOVE: string;
         const UI: string;
         function setGroup(group: any): void;
+        function fire(ev: Abstract): void;
+        function disableOrphans(ev: Abstract): void;
+        class Abstract {
+            type: string;
+        }
     }
 
     namespace Toolbox {

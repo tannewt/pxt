@@ -1,5 +1,9 @@
+/// <reference path="../typings/winrt/winrt.d.ts"/>
 
 namespace pxt.BrowserUtils {
+    export function isWinRT(): boolean {
+        return typeof Windows !== "undefined";
+    }
 
     export function isIFrame(): boolean {
         try {
@@ -136,7 +140,7 @@ namespace pxt.BrowserUtils {
         else {
             matches = /(Firefox|Seamonkey)\/([0-9\.]+)/i.exec(navigator.userAgent);
         }
-        if (matches.length == 0) {
+        if (!matches || matches.length == 0) {
             return null;
         }
         return matches[matches.length - 1];
@@ -236,10 +240,26 @@ namespace pxt.BrowserUtils {
         return match ? match.path : null;
     }
 
+    export function devicePixelRatio(): number {
+        if (typeof window === "undefined" || !window.screen) return 1;
+
+        if (window.screen.systemXDPI !== undefined
+            && window.screen.logicalXDPI !== undefined
+            && window.screen.systemXDPI > window.screen.logicalXDPI) {
+            return window.screen.systemXDPI / window.screen.logicalXDPI;
+        }
+        else if (window && window.devicePixelRatio !== undefined) {
+            return window.devicePixelRatio;
+        }
+        return 1;
+    }
+
+    export function browserDownloadBinText(text: string, name: string, contentType: string = "application/octet-stream", onError?: (err: any) => void): string {
+        return browserDownloadBase64(btoa(text), name, contentType, onError)
+    }
+
     export function browserDownloadText(text: string, name: string, contentType: string = "application/octet-stream", onError?: (err: any) => void): string {
-        pxt.debug('trigger download')
-        let buf = Util.stringToUint8Array(Util.toUTF8(text))
-        return browserDownloadUInt8Array(buf, name, contentType, onError);
+        return browserDownloadBase64(btoa(Util.toUTF8(text)), name, contentType, onError)
     }
 
     export function browserDownloadDataUri(uri: string, name: string) {
@@ -260,6 +280,12 @@ namespace pxt.BrowserUtils {
                 document.body.appendChild(iframe);
             }
             iframe.src = uri;
+        } else if (pxt.BrowserUtils.isEdge() || pxt.BrowserUtils.isIE()) {
+            //Fix for edge
+            let byteString = atob(uri.split(',')[1]);
+            let ia = Util.stringToUint8Array(byteString);
+            let blob = new Blob([ia], { type: "img/png" });
+            window.navigator.msSaveOrOpenBlob(blob, name);
         } else {
             let link = <any>window.document.createElement('a');
             if (typeof link.download == "string") {
@@ -275,13 +301,19 @@ namespace pxt.BrowserUtils {
     }
 
     export function browserDownloadUInt8Array(buf: Uint8Array, name: string, contentType: string = "application/octet-stream", onError?: (err: any) => void): string {
-        const isMobileBrowser = /mobile/.test(navigator.userAgent);
+        return browserDownloadBase64(btoa(Util.uint8ArrayToString(buf)), name, contentType, onError)
+    }
+
+    export function browserDownloadBase64(b64: string, name: string, contentType: string = "application/octet-stream", onError?: (err: any) => void): string {
+        pxt.debug('trigger download')
+
+        const isMobileBrowser = /mobile/i.test(navigator.userAgent);
         const isDesktopIE = (<any>window).navigator.msSaveOrOpenBlob && !isMobileBrowser;
 
-        const dataurl = "data:" + contentType + ";base64," + btoa(Util.uint8ArrayToString(buf))
+        const dataurl = "data:" + contentType + ";base64," + b64
         try {
             if (isDesktopIE) {
-                let b = new Blob([buf], { type: contentType })
+                let b = new Blob([Util.stringToUint8Array(atob(b64))], { type: contentType })
                 let result = (<any>window).navigator.msSaveOrOpenBlob(b, name);
             } else browserDownloadDataUri(dataurl, name);
         } catch (e) {

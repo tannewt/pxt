@@ -19,6 +19,7 @@ namespace pxt.runner {
         pxtUrl?: string;
         packageClass?: string;
         package?: string;
+        showJavaScript?: boolean; // default is to show blocks first
         downloadScreenshots?: boolean
     }
 
@@ -30,8 +31,16 @@ namespace pxt.runner {
         hex?: string;
     }
 
+    function appendBlocks($parent: JQuery, $svg: JQuery) {
+        $parent.append($('<div class="ui content blocks"/>').append($svg));
+    }
+
     function appendJs($parent: JQuery, $js: JQuery, woptions: WidgetOptions) {
         $parent.append($('<div class="ui content js"/>').append($js));
+        $('code.highlight').each(function (i, block) {
+            let hljs = pxt.docs.requireHighlightJs();
+            if (hljs) hljs.highlightBlock(block);
+        });
     }
 
     function fillWithWidget(
@@ -55,22 +64,40 @@ namespace pxt.runner {
         let $c = $('<div class="ui top attached segment"></div>');
         let $menu = $h.find('.right.menu');
 
-        // blocks
-        $c.append($svg);
+        if (options.showJavaScript) {
+            // blocks
+            $c.append($js);
 
-        // js menu
-        if (woptions.showJs) {
-            appendJs($c, $js, woptions);
+            // js menu
+            if ($svg) {
+                const $svgBtn = $('<a class="item blocks"><i aria-label="Blocks" class="puzzle icon"></i></a>').click(() => {
+                    if ($c.find('.blocks')[0])
+                        $c.find('.blocks').remove();
+                    else {
+                        if ($js) appendBlocks($js.parent(), $svg);
+                        else appendBlocks($c, $svg);
+                    }
+                })
+                $menu.append($svgBtn);
+            }
         } else {
-            let $jsBtn = $('<a class="item js"><i aria-label="JavaScript" class="keyboard icon"></i></a>').click(() => {
-                if ($c.find('.js')[0])
-                    $c.find('.js').remove(); // remove previous simulators
-                else {
-                    if ($svg) appendJs($svg.parent(), $js, woptions);
-                    else appendJs($c, $js, woptions);
-                }
-            })
-            $menu.append($jsBtn);
+            // blocks
+            $c.append($svg);
+
+            // js menu
+            if (woptions.showJs) {
+                appendJs($c, $js, woptions);
+            } else {
+                const $jsBtn = $('<a class="item js"><i aria-label="JavaScript" class="align left icon"></i></a>').click(() => {
+                    if ($c.find('.js')[0])
+                        $c.find('.js').remove();
+                    else {
+                        if ($svg) appendJs($svg.parent(), $js, woptions);
+                        else appendJs($c, $js, woptions);
+                    }
+                })
+                $menu.append($jsBtn);
+            }
         }
 
         // runner menu
@@ -81,7 +108,7 @@ namespace pxt.runner {
                 else {
                     let padding = '81.97%';
                     if (pxt.appTarget.simulator) padding = (100 / pxt.appTarget.simulator.aspectRatio) + '%';
-                    let $embed = $(`<div class="ui card sim"><div class="ui content"><div style="position:relative;height:0;padding-bottom:${padding};overflow:hidden;"><iframe style="position:absolute;top:0;left:0;width:100%;height:100%;" src="${getRunUrl(options) + "?nofooter=1&code=" + encodeURIComponent($js.text())}" allowfullscreen="allowfullscreen" sandbox="allow-scripts allow-same-origin" frameborder="0"></iframe></div></div></div>`);
+                    let $embed = $(`<div class="ui card sim"><div class="ui content"><div style="position:relative;height:0;padding-bottom:${padding};overflow:hidden;"><iframe style="position:absolute;top:0;left:0;width:100%;height:100%;" src="${getRunUrl(options) + "#nofooter=1&code=" + encodeURIComponent($js.text())}" allowfullscreen="allowfullscreen" sandbox="allow-scripts allow-same-origin" frameborder="0"></iframe></div></div></div>`);
                     $c.append($embed);
                 }
             })
@@ -90,7 +117,7 @@ namespace pxt.runner {
 
         if (woptions.hexname && woptions.hex) {
             let $hexBtn = $('<a class="item"><i aria-label="download" class="download icon"></i></a>').click(() => {
-                BrowserUtils.browserDownloadText(woptions.hex, woptions.hexname, pxt.appTarget.compile.hexMimeType);
+                BrowserUtils.browserDownloadBinText(woptions.hex, woptions.hexname, pxt.appTarget.compile.hexMimeType);
             })
             $menu.append($hexBtn);
         }
@@ -105,7 +132,7 @@ namespace pxt.runner {
         // download screenshots
         if (options.downloadScreenshots && woptions.hexname) {
             pxt.debug("Downloading screenshot for: " + woptions.hexname);
-            let filename = woptions.hexname.substr(0,woptions.hexname.lastIndexOf('.'));
+            let filename = woptions.hexname.substr(0, woptions.hexname.lastIndexOf('.'));
             let fontSize = window.getComputedStyle($svg.get(0).querySelector(".blocklyText")).getPropertyValue("font-size");
             const customCss = `
 .blocklyMainBackground {
@@ -126,23 +153,25 @@ namespace pxt.runner {
             let svgElement = $svg.get(0) as any;
             let bbox = $svg.get(0).getBoundingClientRect();
             pxt.blocks.layout.svgToPngAsync(svgElement, customCss, 0, 0, bbox.width, bbox.height)
-            .done(uri => {
-                if (uri)
-                    BrowserUtils.browserDownloadDataUri(
-                        uri,
-                        (name || `${pxt.appTarget.nickname || pxt.appTarget.forkof || pxt.appTarget.id}-${filename}`) + ".png");
-            });
+                .done(uri => {
+                    if (uri)
+                        BrowserUtils.browserDownloadDataUri(
+                            uri,
+                            (name || `${pxt.appTarget.nickname || pxt.appTarget.forkof || pxt.appTarget.id}-${filename}`) + ".png");
+                });
         }
     }
 
-    function renderNextSnippetAsync(cls: string, render: (container: JQuery, r: pxt.runner.DecompileResult) => void, options?: pxt.blocks.BlocksRenderOptions): Promise<void> {
+    function renderNextSnippetAsync(cls: string,
+        render: (container: JQuery, r: pxt.runner.DecompileResult) => void,
+        options?: pxt.blocks.BlocksRenderOptions): Promise<void> {
         if (!cls) return Promise.resolve();
 
         let $el = $("." + cls).first();
         if (!$el[0]) return Promise.resolve();
 
         if (!options.emPixels) options.emPixels = 14;
-        if (!options.layout) options.layout = pxt.blocks.BlockLayout.Align;
+        if (!options.layout) options.layout = pxt.blocks.BlockLayout.Flow;
 
         return pxt.runner.decompileToBlocksAsync($el.text(), options)
             .then((r) => {
@@ -161,7 +190,7 @@ namespace pxt.runner {
         let snippetCount = 0;
         return renderNextSnippetAsync(options.snippetClass, (c, r) => {
             let s = r.compileBlocks && r.compileBlocks.success ? $(r.blocksSvg) : undefined;
-            let js = $('<code/>').text(c.text().trim());
+            let js = $('<code class="lang-typescript highlight"/>').text(c.text().trim());
             if (options.snippetReplaceParent) c = c.parent();
             let compiled = r.compileJS && r.compileJS.success;
             let hex = options.hex && compiled && r.compileJS.outfiles[pxtc.BINARY_HEX]
@@ -200,10 +229,10 @@ namespace pxt.runner {
             let s = r.compileBlocks && r.compileBlocks.success ? $(r.blocksSvg) : undefined;
             let sig = info.decl.getText().replace(/^export/, '');
             sig = sig.slice(0, sig.indexOf('{')).trim() + ';';
-            let js = $('<code/>').text(sig);
+            let js = $('<code class="lang-typescript highlight"/>').text(sig);
             if (options.snippetReplaceParent) c = c.parent();
             fillWithWidget(options, c, js, s, { showJs: true, hideGutter: true });
-        }, { package: options.package });
+        }, { package: options.package, snippetMode: true });
     }
 
     function renderShuffleAsync(options: ClientRenderOptions): Promise<void> {
@@ -220,10 +249,44 @@ namespace pxt.runner {
 
     function renderBlocksAsync(options: ClientRenderOptions): Promise<void> {
         return renderNextSnippetAsync(options.blocksClass, (c, r) => {
-            let s = r.blocksSvg;
+            const s = r.blocksSvg;
             if (options.snippetReplaceParent) c = c.parent();
-            c.replaceWith(s);
-        }, { package: options.package });
+            const segment = $('<div class="ui segment"/>').append(s);
+            c.replaceWith(segment);
+        }, { package: options.package, snippetMode: true });
+    }
+
+    function renderInlineBlocksAsync(options: pxt.blocks.BlocksRenderOptions): Promise<void> {
+        options = Util.clone(options);
+        options.emPixels = 18;
+        options.snippetMode = true;
+
+        const $els = $(`:not(pre) > code`);
+        let i = 0;
+        function renderNextAsync(): Promise<void> {
+            if (i >= $els.length) return Promise.resolve();
+            const $el = $($els[i++]);
+            const text = $el.text();
+            const m = /^\[([^\]]+)\]$/.exec(text);
+            if (!m) return renderNextAsync();
+
+            const code = m[1];
+            return pxt.runner.decompileToBlocksAsync(code, options)
+                .then(r => {
+                    if (r.blocksSvg) {
+                        let $newel = $('<span class="block"/>').append(r.blocksSvg);
+                        const file = r.compileJS.ast.getSourceFile("main.ts");
+                        const stmt = file.statements[0];
+                        const info = decompileCallInfo(stmt);
+                        if (info && info.attrs.help)
+                            $newel = $(`<a class="ui link"/>`).attr("href", `/reference/${info.attrs.help}`).append($newel);
+                        $el.replaceWith($newel);
+                    }
+                    return Promise.delay(1, renderNextAsync());
+                });
+        }
+
+        return renderNextAsync();
     }
 
     function renderProjectAsync(options: ClientRenderOptions): Promise<void> {
@@ -258,17 +321,15 @@ namespace pxt.runner {
 
     function renderLinksAsync(options: ClientRenderOptions, cls: string, replaceParent: boolean, ns: boolean): Promise<void> {
         return renderNextSnippetAsync(cls, (c, r) => {
-            let cjs = r.compileJS;
+            const cjs = r.compileJS;
             if (!cjs) return;
-            let file = r.compileJS.ast.getSourceFile("main.ts");
-            let stmts = file.statements;
-            let ul = $('<div />').addClass('ui cards');
-
-            let addItem = (card: pxt.CodeCard) => {
+            const file = r.compileJS.ast.getSourceFile("main.ts");
+            const stmts = file.statements.slice(0).reverse();
+            const ul = $('<div />').addClass('ui cards');
+            const addItem = (card: pxt.CodeCard) => {
                 if (!card) return;
-                ul.append(pxt.docs.codeCard.render(card, { hideHeader: true }));
+                ul.append(pxt.docs.codeCard.render(card, { hideHeader: true, shortName: true }));
             }
-
             stmts.forEach(stmt => {
                 let info = decompileCallInfo(stmt);
                 if (info) {
@@ -287,9 +348,8 @@ namespace pxt.runner {
                                     : undefined
                         })
                     } else if (block) {
-                        let card = U.clone(block.codeCard);
+                        let card = U.clone(block.codeCard) as pxt.CodeCard;
                         if (card) {
-                            card.link = true;
                             addItem(card);
                         }
                     } else {
@@ -432,13 +492,14 @@ namespace pxt.runner {
                     <iframe style="position:absolute;top:0;left:0;width:100%;height:100%;" allowfullscreen="allowfullscreen" frameborder="0" sandbox="allow-scripts allow-same-origin"></iframe>
                     </div>
                     </div></div>`)
-                $sim.find("iframe").attr("src", getRunUrl(options) + "?nofooter=1&code=" + encodeURIComponent($c.text().trim()));
+                $sim.find("iframe").attr("src", getRunUrl(options) + "#nofooter=1&code=" + encodeURIComponent($c.text().trim()));
                 if (options.snippetReplaceParent) $c = $c.parent();
                 $c.replaceWith($sim);
             });
         }
 
         return Promise.resolve()
+            .then(() => renderInlineBlocksAsync(options))
             .then(() => renderShuffleAsync(options))
             .then(() => renderLinksAsync(options, options.linksClass, options.snippetReplaceParent, false))
             .then(() => renderLinksAsync(options, options.namespacesClass, options.snippetReplaceParent, true))

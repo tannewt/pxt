@@ -38,6 +38,7 @@ namespace pxt {
     }
 }
 
+// preprocess C++ file to find functions exposed to pxt
 namespace pxt.cpp {
     import U = pxtc.Util;
     let lf = U.lf;
@@ -126,6 +127,7 @@ namespace pxt.cpp {
     export function getExtensionInfo(mainPkg: MainPackage): pxtc.ExtensionInfo {
         let pkgSnapshot: Map<string> = {}
         let constsName = "dal.d.ts"
+        let sourcePath = "/source/"
 
         for (let pkg of mainPkg.sortedDeps()) {
             pkg.addSnapshot(pkgSnapshot, [constsName, ".h", ".cpp"])
@@ -137,8 +139,11 @@ namespace pxt.cpp {
         }
 
         pxt.debug("Generating new extinfo")
+        const res = pxtc.emptyExtInfo();
+        const isPlatformio = pxt.appTarget.compileService && !!pxt.appTarget.compileService.platformioIni;
+        if (isPlatformio)
+            sourcePath = "/src/"
 
-        let res = pxtc.emptyExtInfo();
         let pointersInc = "\nPXT_SHIMS_BEGIN\n"
         let includesInc = `#include "pxt.h"\n`
         let thisErrors = ""
@@ -158,7 +163,7 @@ namespace pxt.cpp {
                 serviceId: "nocompile"
             }
 
-        let enumVals: Map<string> = {
+        const enumVals: Map<string> = {
             "true": "1",
             "false": "0",
             "null": "0",
@@ -167,12 +172,13 @@ namespace pxt.cpp {
 
         // we sometimes append _ to C++ names to avoid name clashes
         function toJs(name: string) {
-            return name.trim().replace(/_$/, "")
+            return name.trim().replace(/[\_\*]$/, "")
         }
 
-        for (let pkg of mainPkg.sortedDeps()) {
+        for (const pkg of mainPkg.sortedDeps()) {
             if (pkg.getFiles().indexOf(constsName) >= 0) {
-                let src = pkg.host().readFile(pkg, constsName)
+                const src = pkg.host().readFile(pkg, constsName)
+                Util.assert(!!src, `${constsName} not found in ${pkg.id}`)
                 src.split(/\r?\n/).forEach(ln => {
                     let m = /^\s*(\w+) = (.*),/.exec(ln)
                     if (m) {
@@ -187,6 +193,11 @@ namespace pxt.cpp {
             let currDocComment = ""
             let currAttrs = ""
             let inDocComment = false
+            let indexedInstanceAttrs: pxtc.CommentAttrs
+            let indexedInstanceIdx = -1
+
+            // replace #if 0 .... #endif with newlines
+            src = src.replace(/^\s*#\s*if\s+0\s*$[^]*?^\s*#\s*endif\s*$/mg, f => f.replace(/[^\n]/g, ""))
 
             function interfaceName() {
                 let n = currNs.replace(/Methods$/, "")
@@ -196,12 +207,27 @@ namespace pxt.cpp {
 
             lineNo = 0
 
+            // the C++ types we can map to TypeScript
             function mapType(tp: string) {
                 switch (tp.replace(/\s+/g, "")) {
                     case "void": return "void";
+                    // TODO: need int16_t
                     case "int32_t":
                     case "uint32_t":
+                    case "unsigned":
                     case "int": return "number";
+
+                    case "uint16_t": return "uint16";
+
+                    case "int16_t":
+                    case "short": return "int16";
+
+                    case "uint8_t":
+                    case "byte": return "uint8";
+
+                    case "int8_t":
+                    case "sbyte": return "int8";
+
                     case "bool": return "boolean";
                     case "StringData*": return "string";
                     case "ImageLiteral": return "string";
@@ -343,6 +369,7 @@ namespace pxt.cpp {
 
                 m = /^\s*(\w+)([\*\&]*\s+[\*\&]*)(\w+)\s*\(([^\(\)]*)\)\s*(;\s*$|\{|$)/.exec(ln)
                 if (currAttrs && m) {
+                    indexedInstanceAttrs = null
                     let parsedAttrs = pxtc.parseCommentString(currAttrs)
                     if (!currNs) err("missing namespace declaration");
                     let retTp = (m[1] + m[2]).replace(/\s+/g, "")
@@ -422,8 +449,35 @@ namespace pxt.cpp {
                         protos.write(`${retTp} ${funName}(${origArgs});`)
                     }
                     res.functions.push(fi)
-                    pointersInc += "(uint32_t)(void*)::" + fi.name + ",\n"
+                    if (isPlatformio)
+                        pointersInc += "PXT_FNPTR(::" + fi.name + "),\n"
+                    else
+                        pointersInc += "(uint32_t)(void*)::" + fi.name + ",\n"
                     return;
+                }
+
+                m = /^\s*(\w+)\s+(\w+)\s*;/.exec(ln)
+                if (currAttrs && m) {
+                    let parsedAttrs = pxtc.parseCommentString(currAttrs)
+                    if (parsedAttrs.indexedInstanceNS) {
+                        indexedInstanceAttrs = parsedAttrs
+                        shimsDTS.setNs(parsedAttrs.indexedInstanceNS)
+                        indexedInstanceIdx = 0
+                    }
+                    let tp = m[1]
+                    let nm = m[2]
+
+                    if (indexedInstanceAttrs) {
+                        currAttrs = currAttrs.trim()
+                        currAttrs += ` fixedInstance shim=${indexedInstanceAttrs.indexedInstanceShim}(${indexedInstanceIdx++})`
+                        shimsDTS.write("")
+                        shimsDTS.write(currDocComment)
+                        shimsDTS.write(currAttrs)
+                        shimsDTS.write(`const ${nm}: ${mapType(tp)};`)
+                        currDocComment = ""
+                        currAttrs = ""
+                        return;
+                    }
                 }
 
                 if (currAttrs && ln.trim()) {
@@ -437,10 +491,16 @@ namespace pxt.cpp {
             return outp
         }
 
-        let currSettings: Map<any> = {}
-        let settingSrc: Map<Package> = {}
+        const currSettings: Map<any> = {}
+        const optSettings: Map<any> = {}
+        const settingSrc: Map<Package> = {}
 
         function parseJson(pkg: Package) {
+            let j0 = pkg.config.platformio
+            if (j0 && j0.dependencies) {
+                U.jsonCopyFrom(res.platformio.dependencies, j0.dependencies)
+            }
+
             let json = pkg.config.yotta
             if (!json) return;
 
@@ -450,10 +510,10 @@ namespace pxt.cpp {
             }
 
             if (json.config) {
-                let cfg = U.jsonFlatten(json.config)
-                for (let settingName of Object.keys(cfg)) {
-                    let prev = U.lookup(settingSrc, settingName)
-                    let settingValue = cfg[settingName]
+                const cfg = U.jsonFlatten(json.config)
+                for (const settingName of Object.keys(cfg)) {
+                    const prev = U.lookup(settingSrc, settingName)
+                    const settingValue = cfg[settingName]
                     if (!prev || prev.config.yotta.configIsJustDefaults) {
                         settingSrc[settingName] = pkg
                         currSettings[settingName] = settingValue
@@ -469,15 +529,26 @@ namespace pxt.cpp {
                     }
                 }
             }
+
+            if (json.optionalConfig) {
+                const cfg = U.jsonFlatten(json.optionalConfig)
+                for (const settingName of Object.keys(cfg)) {
+                    const settingValue = cfg[settingName];
+                    // last one wins
+                    optSettings[settingName] = settingValue;
+                }
+            }
         }
 
 
         // This is overridden on the build server, but we need it for command line build
-        if (pxt.appTarget.compile && pxt.appTarget.compile.hasHex) {
-            U.assert(!!pxt.appTarget.compileService.yottaCorePackage);
-            U.assert(!!pxt.appTarget.compileService.githubCorePackage);
-            U.assert(!!pxt.appTarget.compileService.gittag);
-            res.yotta.dependencies[pxt.appTarget.compileService.yottaCorePackage] = pxt.appTarget.compileService.githubCorePackage + "#" + compileService.gittag;
+        if (!isPlatformio && pxt.appTarget.compile && pxt.appTarget.compile.hasHex) {
+            let cs = pxt.appTarget.compileService
+            U.assert(!!cs.yottaCorePackage);
+            U.assert(!!cs.githubCorePackage);
+            U.assert(!!cs.gittag);
+            let tagged = cs.githubCorePackage + "#" + compileService.gittag
+            res.yotta.dependencies[cs.yottaCorePackage] = tagged;
         }
 
         if (mainPkg) {
@@ -499,13 +570,15 @@ namespace pxt.cpp {
                     let isHeader = U.endsWith(fn, ".h")
                     if (isHeader || U.endsWith(fn, ".cpp")) {
                         let fullName = pkg.config.name + "/" + fn
+                        if (pkg.config.name == "core" && isHeader)
+                            fullName = fn
                         if (isHeader)
-                            includesInc += `#include "source/${fullName}"\n`
+                            includesInc += `#include "${isPlatformio ? "" : sourcePath.slice(1)}${fullName}"\n`
                         let src = pkg.readFile(fn)
                         fileName = fullName
                         // parseCpp() will remove doc comments, to prevent excessive recompilation
                         src = parseCpp(src, isHeader)
-                        res.extensionFiles["/source/" + fullName] = src
+                        res.extensionFiles[sourcePath + fullName] = src
 
                         if (pkg.level == 0)
                             res.onlyPublic = false
@@ -522,28 +595,50 @@ namespace pxt.cpp {
         if (allErrors)
             U.userError(allErrors)
 
-        res.yotta.config = U.jsonUnFlatten(currSettings)
-        let configJson = res.yotta.config
-        let moduleJson = {
-            "name": "pxt-microbit-app",
-            "version": "0.0.0",
-            "description": "Auto-generated. Do not edit.",
-            "license": "n/a",
-            "dependencies": res.yotta.dependencies,
-            "targetDependencies": {},
-            "bin": "./source"
+        // merge optional settings
+        U.jsonCopyFrom(optSettings, currSettings);
+        const configJson = U.jsonUnFlatten(optSettings)
+        if (isPlatformio) {
+            const iniLines = pxt.appTarget.compileService.platformioIni.slice()
+            // TODO merge configjson
+            iniLines.push("lib_deps =")
+            U.iterMap(res.platformio.dependencies, (pkg, ver) => {
+                let pkgSpec = /[@#\/]/.test(ver) ? ver : pkg + "@" + ver
+                iniLines.push("  " + pkgSpec)
+            })
+            res.generatedFiles["/platformio.ini"] = iniLines.join("\n") + "\n"
+        } else {
+            res.yotta.config = configJson;
+            let name = "pxt-app"
+            if (pxt.appTarget.compileService && pxt.appTarget.compileService.yottaBinary)
+                name = pxt.appTarget.compileService.yottaBinary
+                    .replace(/-combined/, "").replace(/\.hex$/, "")
+            let moduleJson = {
+                "name": name,
+                "version": "0.0.0",
+                "description": "Auto-generated. Do not edit.",
+                "license": "n/a",
+                "dependencies": res.yotta.dependencies,
+                "targetDependencies": {},
+                "bin": "./source"
+            }
+            res.generatedFiles["/module.json"] = JSON.stringify(moduleJson, null, 4) + "\n"
         }
-        res.generatedFiles["/source/pointers.cpp"] = includesInc + protos.finish() + pointersInc + "\nPXT_SHIMS_END\n"
-        res.generatedFiles["/module.json"] = JSON.stringify(moduleJson, null, 4) + "\n"
+
+        res.generatedFiles[sourcePath + "pointers.cpp"] = includesInc + protos.finish() + pointersInc + "\nPXT_SHIMS_END\n"
         res.generatedFiles["/config.json"] = JSON.stringify(configJson, null, 4) + "\n"
-        res.generatedFiles["/source/main.cpp"] = `
+        res.generatedFiles[sourcePath + "main.cpp"] = `
 #include "pxt.h"
+#ifdef PXT_MAIN
+PXT_MAIN
+#else
 int main() { 
     uBit.init(); 
     pxt::start(); 
     while (1) uBit.sleep(10000);    
     return 0; 
 }
+#endif
 `
 
         let tmp = res.extensionFiles
@@ -553,7 +648,7 @@ int main() {
             config: compileService.serviceId,
             tag: compileService.gittag,
             replaceFiles: tmp,
-            dependencies: res.yotta.dependencies,
+            dependencies: (!isPlatformio ? res.yotta.dependencies : null)
         }
 
         let data = JSON.stringify(creq)
@@ -608,7 +703,37 @@ int main() {
         return r
     }
 
-    function extractSource(hexfile: string): { meta: string; text: Uint8Array; } {
+    interface RawEmbed {
+        meta: string;
+        text: Uint8Array;
+    }
+
+    function extractSourceFromBin(bin: Uint8Array): RawEmbed {
+        let magic = [0x41, 0x14, 0x0E, 0x2F, 0xB8, 0x2F, 0xA2, 0xBB]
+        outer: for (let p = 0; p < bin.length; p += 16) {
+            if (bin[p] != magic[0])
+                continue
+            for (let i = 0; i < magic.length; ++i)
+                if (bin[p + i] != magic[i])
+                    continue outer
+            let metaLen = bin[p + 8] | (bin[p + 9] << 8)
+            let textLen = bin[p + 10] | (bin[p + 11] << 8) | (bin[p + 12] << 16) | (bin[p + 13] << 24)
+            // TODO test in iOS Safari
+            p += 16
+            let end = p + metaLen + textLen
+            if (end > bin.length)
+                continue
+            let bufmeta = bin.slice(p, p + metaLen)
+            let buftext = bin.slice(p + metaLen, end)
+            return {
+                meta: fromUTF8Bytes(bufmeta),
+                text: buftext
+            }
+        }
+        return null
+    }
+
+    function extractSource(hexfile: string): RawEmbed {
         if (!hexfile) return undefined;
 
         let metaLen = 0
@@ -653,7 +778,7 @@ int main() {
     export interface HexFile {
         meta?: {
             cloudId: string;
-            targetVersion?: string;
+            targetVersions?: pxt.TargetVersions;
             editor: string;
             name: string;
         };
@@ -669,35 +794,50 @@ int main() {
         });
     }
 
-    export function unpackSourceFromHexAsync(dat: ArrayLike<number>): Promise<HexFile> { // string[] (guid)
-        let str = fromUTF8Bytes(dat);
-        let tmp = extractSource(str || "")
-        if (!tmp) return undefined
+    export function unpackSourceFromHexAsync(dat: Uint8Array): Promise<HexFile> { // string[] (guid)
+        let rawEmbed: RawEmbed
 
-        if (!tmp.meta || !tmp.text) {
+        let bin = ts.pxtc.UF2.toBin(dat)
+        if (bin) {
+            rawEmbed = extractSourceFromBin(bin)
+        } else {
+            let str = fromUTF8Bytes(dat);
+            rawEmbed = extractSource(str || "")
+        }
+
+        if (!rawEmbed) return undefined
+
+        if (!rawEmbed.meta || !rawEmbed.text) {
             pxt.debug("This .hex file doesn't contain source.")
             return undefined;
         }
 
-        let hd: { compression: string; headerSize: number; metaSize: number; editor: string; target?: string; } = JSON.parse(tmp.meta)
+        let hd: {
+            compression: string;
+            headerSize: number;
+            metaSize: number;
+            editor: string;
+            target?: string;
+        } = JSON.parse(rawEmbed.meta)
         if (!hd) {
             pxt.debug("This .hex file is not valid.")
             return undefined;
         }
         else if (hd.compression == "LZMA") {
-            return lzmaDecompressAsync(tmp.text)
+            return lzmaDecompressAsync(rawEmbed.text)
                 .then(res => {
                     if (!res) return null;
-                    let meta = res.slice(0, hd.headerSize || hd.metaSize);
+                    let meta = res.slice(0, hd.headerSize || hd.metaSize || 0);
                     let text = res.slice(meta.length);
-                    let metajs = JSON.parse(meta);
-                    return { meta: metajs, source: text }
+                    if (meta)
+                        Util.jsonCopyFrom(hd, JSON.parse(meta))
+                    return { meta: hd as any, source: text }
                 })
         } else if (hd.compression) {
-            pxt.debug(lf("Compression type {0} not supported.", hd.compression))
+            pxt.debug(`Compression type ${hd.compression} not supported.`)
             return undefined
         } else {
-            return Promise.resolve({ source: fromUTF8Bytes(tmp.text) });
+            return Promise.resolve({ source: fromUTF8Bytes(rawEmbed.text) });
         }
     }
 }
@@ -707,52 +847,117 @@ namespace pxt.hex {
     let cdnUrlPromise: Promise<string>;
 
     function downloadHexInfoAsync(extInfo: pxtc.ExtensionInfo) {
-        if (downloadCache.hasOwnProperty(extInfo.sha))
-            return downloadCache[extInfo.sha]
-        return (downloadCache[extInfo.sha] = downloadHexInfoCoreAsync(extInfo))
+        let cachePromise = Promise.resolve();
+
+        if (!downloadCache.hasOwnProperty(extInfo.sha)) {
+            cachePromise = downloadHexInfoCoreAsync(extInfo)
+                .then((hexFile) => {
+                    downloadCache[extInfo.sha] = hexFile;
+                });
+        }
+
+        return cachePromise
+            .then(() => {
+                return downloadCache[extInfo.sha];
+            });
     }
 
     function getCdnUrlAsync() {
         if (cdnUrlPromise) return cdnUrlPromise
-        else return (cdnUrlPromise = Cloud.privateGetAsync("clientconfig").then(r => r.primaryCdnUrl));
+        else {
+            let curr = getOnlineCdnUrl()
+            if (curr) return (cdnUrlPromise = Promise.resolve(curr))
+            return (cdnUrlPromise = Cloud.privateGetAsync("clientconfig").then(r => r.primaryCdnUrl));
+        }
     }
 
     function downloadHexInfoCoreAsync(extInfo: pxtc.ExtensionInfo) {
         let hexurl = ""
-        return getCdnUrlAsync()
-            .then(url => {
-                hexurl = url + "/compile/" + extInfo.sha
-                return U.httpGetTextAsync(hexurl + ".hex")
+
+        return downloadHexInfoLocalAsync(extInfo)
+            .then((hex) => {
+                if (hex) {
+                    // Found the hex image in the local server cache, use that
+                    return hex;
+                }
+
+                return getCdnUrlAsync()
+                    .then(url => {
+                        hexurl = url + "/compile/" + extInfo.sha
+                        return U.httpGetTextAsync(hexurl + ".hex")
+                    })
+                    .then(r => r, e =>
+                        Cloud.privatePostAsync("compile/extension", { data: extInfo.compileData })
+                            .then(ret => new Promise<string>((resolve, reject) => {
+                                let tryGet = () => {
+                                    let url = ret.hex.replace(/\.hex/, ".json")
+                                    pxt.log("polling at " + url)
+                                    return Util.httpGetJsonAsync(url)
+                                        .then(json => {
+                                            if (!json.success)
+                                                U.userError(JSON.stringify(json, null, 1))
+                                            else {
+                                                pxt.log("fetching " + hexurl + ".hex")
+                                                resolve(U.httpGetTextAsync(hexurl + ".hex"))
+                                            }
+                                        },
+                                        e => {
+                                            setTimeout(tryGet, 1000)
+                                            return null
+                                        })
+                                }
+                                tryGet();
+                            })))
+                    .then(text => {
+                        return {
+                            enums: [],
+                            functions: [],
+                            hex: text.split(/\r?\n/)
+                        };
+                    })
             })
-            .then(r => r, e =>
-                Cloud.privatePostAsync("compile/extension", { data: extInfo.compileData })
-                    .then(ret => new Promise<string>((resolve, reject) => {
-                        let tryGet = () => Util.httpGetJsonAsync(ret.hex.replace(/\.hex/, ".json"))
-                            .then(json => {
-                                if (!json.success)
-                                    U.userError(JSON.stringify(json, null, 1))
-                                else
-                                    resolve(U.httpGetTextAsync(hexurl + ".hex"))
-                            },
-                            e => {
-                                setTimeout(tryGet, 1000)
-                                return null
-                            })
-                        tryGet();
-                    })))
-            .then(text =>
-                Util.httpGetJsonAsync(hexurl + "-metainfo.json")
-                    .then(meta => {
-                        meta.hex = text.split(/\r?\n/)
-                        return meta
-                    }))
+    }
+
+    function downloadHexInfoLocalAsync(extInfo: pxtc.ExtensionInfo): Promise<any> {
+        if (!Cloud.localToken || !window || !Cloud.isLocalHost()) {
+            return Promise.resolve();
+        }
+
+        return apiAsync("compile/" + extInfo.sha)
+            .then((json) => {
+                if (!json || json.notInOfflineCache || !json.hex) {
+                    return Promise.resolve();
+                }
+
+                json.hex = json.hex.split(/\r?\n/);
+                return json;
+            })
+            .catch((e) => {
+                return Promise.resolve();
+            });
+    }
+
+    function apiAsync(path: string, data?: any) {
+        return U.requestAsync({
+            url: "/api/" + path,
+            headers: { "Authorization": Cloud.localToken },
+            method: data ? "POST" : "GET",
+            data: data || undefined,
+            allowHttpErrors: true
+        }).then(r => r.json);
     }
 
     export function storeWithLimitAsync(host: Host, idxkey: string, newkey: string, newval: string, maxLen = 10) {
         return host.cacheStoreAsync(newkey, newval)
             .then(() => host.cacheGetAsync(idxkey))
             .then(res => {
-                let keys: string[] = JSON.parse(res || "[]")
+                let keys: string[];
+                try { keys = JSON.parse(res || "[]") }
+                catch (e) {
+                    // cache entry is corrupted, clear cache so that it gets rebuilt
+                    console.error('invalid cache entry, clearing entry');
+                    keys = [];
+                }
                 keys = keys.filter(k => k != newkey)
                 keys.unshift(newkey)
                 let todel = keys.slice(maxLen)
@@ -765,7 +970,13 @@ namespace pxt.hex {
     export function recordGetAsync(host: Host, idxkey: string, newkey: string) {
         return host.cacheGetAsync(idxkey)
             .then(res => {
-                let keys: string[] = JSON.parse(res || "[]")
+                let keys: string[];
+                try { keys = JSON.parse(res || "[]") }
+                catch (e) {
+                    // cache entry is corrupted, clear cache so that it gets rebuilt
+                    console.error('invalid cache entry, clearing entry');
+                    return host.cacheStoreAsync(idxkey, "[]")
+                }
                 if (keys[0] != newkey) {
                     keys = keys.filter(k => k != newkey)
                     keys.unshift(newkey)
@@ -776,9 +987,9 @@ namespace pxt.hex {
             })
     }
 
-    export function getHexInfoAsync(host: Host, extInfo: pxtc.ExtensionInfo): Promise<any> {
+    export function getHexInfoAsync(host: Host, extInfo: pxtc.ExtensionInfo, cloudModule?: any): Promise<pxtc.HexInfo> {
         if (!extInfo.sha)
-            return Promise.resolve(null)
+            return Promise.resolve<any>(null)
 
         if (pxtc.hex.isSetupFor(extInfo))
             return Promise.resolve(pxtc.hex.currentHexInfo)
@@ -788,12 +999,18 @@ namespace pxt.hex {
         let key = "hex-" + extInfo.sha
         return host.cacheGetAsync(key)
             .then(res => {
-                if (res) {
+                let cachedMeta: any;
+                try { cachedMeta = res ? JSON.parse(res) : null }
+                catch (e) {
+                    // cache entry is corrupted, clear cache so that it gets rebuilt
+                    console.log('invalid cache entry, clearing entry');
+                    cachedMeta = null;
+                }
+                if (cachedMeta && cachedMeta.hex) {
                     pxt.debug("cache hit, size=" + res.length)
-                    let meta = JSON.parse(res)
-                    meta.hex = decompressHex(meta.hex)
+                    cachedMeta.hex = decompressHex(cachedMeta.hex)
                     return recordGetAsync(host, "hex-keys", key)
-                        .then(() => meta)
+                        .then(() => cachedMeta)
                 }
                 else {
                     return downloadHexInfoAsync(extInfo)

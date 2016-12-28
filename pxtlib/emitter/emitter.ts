@@ -6,9 +6,11 @@ namespace ts.pxtc {
     export const oops = Util.oops;
     export import U = pxtc.Util;
 
+    export const ON_START_TYPE = "pxt-on-start";
     export const BINARY_JS = "binary.js";
     export const BINARY_HEX = "binary.hex";
     export const BINARY_ASM = "binary.asm";
+    export const BINARY_UF2 = "binary.uf2";
 
     let EK = ir.EK;
     export const SK = SyntaxKind;
@@ -50,7 +52,7 @@ namespace ts.pxtc {
         console.log(stringKind(n))
     }
 
-    // next free error 9259
+    // next free error 9260
     function userError(code: number, msg: string, secondary = false): Error {
         let e = new Error(msg);
         (<any>e).ksEmitterUserError = true;
@@ -78,7 +80,20 @@ namespace ts.pxtc {
             if (b) return b.isRef
             U.oops("unbound type parameter: " + checker.typeToString(t))
         }
-        return !(t.flags & (TypeFlags.NumberLike | TypeFlags.Boolean))
+        if (t.flags & (TypeFlags.NumberLike | TypeFlags.Boolean))
+            return false
+
+        let sym = t.getSymbol()
+        if (sym) {
+            let decl: Declaration = sym.valueDeclaration || sym.declarations[0]
+            if (decl) {
+                let attrs = parseComments(decl)
+                if (attrs.noRefCounting)
+                    return false
+            }
+        }
+
+        return true
     }
 
     function isRefDecl(def: Declaration) {
@@ -269,6 +284,14 @@ namespace ts.pxtc {
         blockBuiltin?: boolean;
         blockNamespace?: string;
         blockIdentity?: string;
+        blockAllowMultiple?: boolean;
+        blockHidden?: boolean; // not available directly in toolbox
+        fixedInstances?: boolean;
+        fixedInstance?: boolean;
+        indexedInstanceNS?: string;
+        indexedInstanceShim?: string;
+        autoCreate?: string;
+        noRefCounting?: boolean;
         color?: string;
         icon?: string;
         imageLiteral?: number;
@@ -277,12 +300,18 @@ namespace ts.pxtc {
         trackArgs?: number[];
         advanced?: boolean;
         sticky?: boolean;
+        deprecated?: boolean;
 
         // on interfaces
         indexerGet?: string;
         indexerSet?: string;
 
+        mutate?: string;
+        mutateText?: string;
+        mutateDefaults?: string;
+
         _name?: string;
+        _source?: string;
         jsDoc?: string;
         paramHelp?: pxt.Map<string>;
         // foo.defl=12 -> paramDefl: { foo: "12" }
@@ -297,6 +326,7 @@ namespace ts.pxtc {
         attrs: CommentAttrs;
         args: Expression[];
         isExpression: boolean;
+        isAutoCreate?: boolean;
     }
 
     export interface ClassInfo {
@@ -329,15 +359,30 @@ namespace ts.pxtc {
     let typeBindings: TypeBinding[] = []
 
     export function getComments(node: Node) {
-        let src = getSourceFileOfNode(node)
-        let doc = getLeadingCommentRangesOfNodeFromText(node, src.text)
-        if (!doc) return "";
-        let cmt = doc.map(r => src.text.slice(r.pos, r.end)).join("\n")
-        return cmt;
+        if (node.kind == SK.VariableDeclaration)
+            node = node.parent.parent // we need variable stmt
+
+        let cmtCore = (node: Node) => {
+            let src = getSourceFileOfNode(node)
+            let doc = getLeadingCommentRangesOfNodeFromText(node, src.text)
+            if (!doc) return "";
+            let cmt = doc.map(r => src.text.slice(r.pos, r.end)).join("\n")
+            return cmt;
+        }
+
+        if (node.symbol && node.symbol.declarations.length > 1) {
+            return node.symbol.declarations.map(cmtCore).join("\n")
+        } else {
+            return cmtCore(node)
+        }
     }
 
     export function parseCommentString(cmt: string): CommentAttrs {
-        let res: CommentAttrs = { paramDefl: {}, callingConvention: ir.CallingConvention.Plain }
+        let res: CommentAttrs = {
+            paramDefl: {},
+            callingConvention: ir.CallingConvention.Plain,
+            _source: cmt
+        }
         let didSomething = true
         while (didSomething) {
             didSomething = false
@@ -394,10 +439,19 @@ namespace ts.pxtc {
         return parseCommentString(cmts)
     }
 
-    export function parseComments(node: Node): CommentAttrs {
-        if (!node || (node as any).isBogusFunction) return parseCommentString("")
+    interface NodeWithAttrs extends Node {
+        pxtCommentAttrs: CommentAttrs;
+    }
+
+    export function parseComments(node0: Node): CommentAttrs {
+        if (!node0 || (node0 as any).isBogusFunction) return parseCommentString("")
+        let node = node0 as NodeWithAttrs
+        let cached = node.pxtCommentAttrs
+        if (cached)
+            return cached
         let res = parseCommentString(getComments(node))
         res._name = getName(node)
+        node.pxtCommentAttrs = res
         return res
     }
 
@@ -619,7 +673,11 @@ namespace ts.pxtc {
         return rootFunction as MethodDeclaration
     }
 
-    export function compileBinary(program: Program, host: CompilerHost, opts: CompileOptions, res: CompileResult): EmitResult {
+    export function compileBinary(
+        program: Program,
+        host: CompilerHost,
+        opts: CompileOptions,
+        res: CompileResult): EmitResult {
         const diagnostics = createDiagnosticCollection();
         checker = program.getTypeChecker();
         let classInfos: pxt.Map<ClassInfo> = {}
@@ -630,6 +688,7 @@ namespace ts.pxtc {
         let irCachesToClear: NodeWithCache[] = []
         let ifaceMembers: pxt.Map<number> = {}
         let nextIfaceMemberId = 0;
+        let autoCreateFunctions: pxt.Map<boolean> = {}
 
         lastNodeId = 0
         currNodeWave++
@@ -650,7 +709,7 @@ namespace ts.pxtc {
                 };
             }
 
-            hex.setupFor(opts.extinfo || emptyExtInfo(), opts.hexinfo);
+            hex.setupFor(opts.target, opts.extinfo || emptyExtInfo(), opts.hexinfo);
             hex.setupInlineAssembly(opts);
 
             opts.breakpoints = true
@@ -672,7 +731,7 @@ namespace ts.pxtc {
                 start: 0,
                 length: 0,
                 line: 0,
-                character: 0,
+                column: 0,
                 successors: null
             }]
         }
@@ -883,7 +942,11 @@ namespace ts.pxtc {
                 host.writeFile(fn, data, false, null);
 
             if (opts.target.isNative) {
-                thumbEmit(bin, opts, res)
+                if (opts.extinfo.yotta)
+                    bin.writeFile("yotta.json", JSON.stringify(opts.extinfo.yotta, null, 2));
+                if (opts.extinfo.platformio)
+                    bin.writeFile("platformio.json", JSON.stringify(opts.extinfo.platformio, null, 2));
+                processorEmit(bin, opts, res)
             } else {
                 jsEmit(bin)
             }
@@ -1078,6 +1141,8 @@ namespace ts.pxtc {
                     methods: [],
                     bindings: bindings
                 }
+                if (info.attrs.autoCreate)
+                    autoCreateFunctions[info.attrs.autoCreate] = true
                 classInfos[id] = info;
                 // only do it after storing our in case we run into cycles (which should be errors)
                 info.baseClassInfo = getBaseClassInfo(decl)
@@ -1185,7 +1250,19 @@ ${lbl}: .short 0xffff
             }
         }
 
+        function mkSyntheticInt(v: number): LiteralExpression {
+            return <any>{
+                kind: SK.NumericLiteral,
+                text: v.toString()
+            }
+        }
+
         function emitLocalLoad(decl: VarOrParam) {
+            if (isGlobalVar(decl)) {
+                let attrs = parseComments(decl)
+                if (attrs.shim)
+                    return emitShim(decl, decl, [])
+            }
             let l = lookupCell(decl)
             recordUse(decl)
             let r = l.load()
@@ -1210,7 +1287,7 @@ ${lbl}: .short 0xffff
 
         function emitIdentifier(node: Identifier): ir.Expr {
             let decl = getDecl(node)
-            if (decl && (decl.kind == SK.VariableDeclaration || decl.kind == SK.Parameter)) {
+            if (decl && (decl.kind == SK.VariableDeclaration || decl.kind == SK.Parameter || decl.kind === SK.BindingElement)) {
                 return emitLocalLoad(<VarOrParam>decl)
             } else if (decl && decl.kind == SK.FunctionDeclaration) {
                 return emitFunLiteral(decl as FunctionDeclaration)
@@ -1295,7 +1372,6 @@ ${lbl}: .short 0xffff
         function emitQualifiedName(node: QualifiedName) { }
         function emitObjectBindingPattern(node: BindingPattern) { }
         function emitArrayBindingPattern(node: BindingPattern) { }
-        function emitBindingElement(node: BindingElement) { }
         function emitArrayLiteral(node: ArrayLiteralExpression) {
             let eltT = arrayElementType(typeOf(node))
             let isRef = isRefType(eltT)
@@ -1364,7 +1440,7 @@ ${lbl}: .short 0xffff
                     }
                     ev = val + ""
                 }
-                if (/^\d+$/.test(ev))
+                if (/^[+-]?\d+$/.test(ev))
                     return ir.numlit(parseInt(ev));
                 return ir.rtcall(ev, [])
             } else if (decl.kind == SK.PropertySignature) {
@@ -1387,6 +1463,8 @@ ${lbl}: .short 0xffff
                 throw userError(9211, lf("cannot use method as lambda; did you forget '()' ?"))
             } else if (decl.kind == SK.FunctionDeclaration) {
                 return emitFunLiteral(decl as FunctionDeclaration)
+            } else if (decl.kind == SK.VariableDeclaration) {
+                return emitLocalLoad(decl as VariableDeclaration)
             } else {
                 throw unhandled(node, lf("Unknown property access for {0}", stringKind(decl)), 9237);
             }
@@ -1493,6 +1571,14 @@ ${lbl}: .short 0xffff
             let hasRet = !(typeOf(node).flags & TypeFlags.Void)
             let nm = attrs.shim
 
+            if (nm.indexOf('(') >= 0) {
+                let parse = /(.*)\((\d+)\)$/.exec(nm)
+                if (parse) {
+                    nm = parse[1]
+                    args.push(mkSyntheticInt(parseInt(parse[2])))
+                }
+            }
+
             if (nm == "TD_NOOP") {
                 assert(!hasRet)
                 return ir.numlit(0)
@@ -1504,10 +1590,10 @@ ${lbl}: .short 0xffff
             }
 
             if (opts.target.isNative) {
-                hex.validateShim(getDeclName(decl), attrs, hasRet, args.length);
+                hex.validateShim(getDeclName(decl), nm, hasRet, args.length);
             }
 
-            return rtcallMask(attrs.shim, args, attrs.callingConvention)
+            return rtcallMask(nm, args, attrs.callingConvention)
         }
 
         function isNumericLiteral(node: Expression) {
@@ -1599,6 +1685,9 @@ ${lbl}: .short 0xffff
                 isExpression: hasRet
             };
             (node as any).callInfo = callInfo
+
+            if (callInfo.args.length == 0 && U.lookup(autoCreateFunctions, callInfo.qName))
+                callInfo.isAutoCreate = true
 
             let bindings: TypeBinding[] = []
 
@@ -1993,7 +2082,12 @@ ${lbl}: .short 0xffff
 
             U.pushRange(typeBindings, bindings)
 
+            const destructuredParameters: ParameterDeclaration[] = []
+
             proc.args = getParameters(node).map((p, i) => {
+                if (p.name.kind === SK.ObjectBindingPattern) {
+                    destructuredParameters.push(p)
+                }
                 let l = new ir.Cell(i, p, getVarInfo(p))
                 l.isarg = true
                 return l
@@ -2008,6 +2102,8 @@ ${lbl}: .short 0xffff
                     proc.emitExpr(l.storeDirect(tmp))
                 }
             })
+
+            destructuredParameters.forEach(dp => emitVariableDeclaration(dp))
 
             if (node.body.kind == SK.Block) {
                 emit(node.body);
@@ -2055,7 +2151,7 @@ ${lbl}: .short 0xffff
             if (attrs.shim != null) {
                 if (opts.target.isNative) {
                     hex.validateShim(getDeclName(node),
-                        attrs,
+                        attrs.shim,
                         funcHasReturn(node),
                         getParameters(node).length);
                 }
@@ -2205,16 +2301,21 @@ ${lbl}: .short 0xffff
         }
 
         function fieldIndex(pacc: PropertyAccessExpression): FieldAccessInfo {
-            let tp = typeOf(pacc.expression)
+            const tp = typeOf(pacc.expression)
             if (isPossiblyGenericClassType(tp)) {
-                let info = getClassInfo(tp)
-                let fld = info.allfields.filter(f => (<Identifier>f.name).text == pacc.name.text)[0]
-                if (!fld)
-                    userError(9224, lf("field {0} not found", pacc.name.text))
-                return fieldIndexCore(info, fld, typeOf(pacc))
+                const info = getClassInfo(tp)
+                return fieldIndexCore(info, getFieldInfo(info, pacc.name.text), typeOf(pacc))
             } else {
                 throw unhandled(pacc, lf("bad field access"), 9247)
             }
+        }
+
+        function getFieldInfo(info: ClassInfo, fieldName: string) {
+            const field = info.allfields.filter(f => (<Identifier>f.name).text == fieldName)[0]
+            if (!field) {
+                userError(9224, lf("field {0} not found", fieldName))
+            }
+            return field;
         }
 
         function emitStore(trg: Expression, src: Expression) {
@@ -2329,6 +2430,7 @@ ${lbl}: .short 0xffff
             while (/^\s$/.exec(src.text[pos]))
                 pos++;
             let p = ts.getLineAndCharacterOfPosition(src, pos)
+            let e = ts.getLineAndCharacterOfPosition(src, node.end);
             let brk: Breakpoint = {
                 id: res.breakpoints.length,
                 isDebuggerStmt: node.kind == SK.DebuggerStatement,
@@ -2336,7 +2438,9 @@ ${lbl}: .short 0xffff
                 start: pos,
                 length: node.end - pos,
                 line: p.line,
-                character: p.character,
+                endLine: e.line,
+                column: p.character,
+                endColumn: e.character,
                 successors: null
             }
             res.breakpoints.push(brk)
@@ -2824,6 +2928,16 @@ ${lbl}: .short 0xffff
             emitBrk(node)
         }
         function emitVariableDeclaration(node: VarOrParam): ir.Cell {
+            if (node.name.kind === SK.ObjectBindingPattern) {
+                if (!node.initializer) {
+                    (node.name as BindingPattern).elements.forEach(e => emitVariableDeclaration(e))
+                    return null;
+                }
+                else {
+                    userError(9259, "Object destructuring with initializers is not supported")
+                }
+            }
+
             typeCheckVar(node)
             if (!isUsed(node)) {
                 return null;
@@ -2834,13 +2948,50 @@ ${lbl}: .short 0xffff
                 proc.emitClrIfRef(loc) // we might be in a loop
                 proc.emitExpr(loc.storeDirect(ir.rtcall("pxtrt::mkloc" + loc.refSuffix(), [])))
             }
-            // TODO make sure we don't emit code for top-level globals being initialized to zero
-            if (node.initializer) {
+
+            if (node.kind === SK.BindingElement) {
+                emitBrk(node)
+                proc.emitExpr(loc.storeByRef(bindingElementAccessExpression(node as BindingElement)[0]))
+                proc.stackEmpty();
+            }
+            else if (node.initializer) {
+                // TODO make sure we don't emit code for top-level globals being initialized to zero
                 emitBrk(node)
                 proc.emitExpr(loc.storeByRef(emitExpr(node.initializer)))
                 proc.stackEmpty();
             }
             return loc;
+        }
+
+        function bindingElementAccessExpression(bindingElement: BindingElement): [ir.Expr, Type] {
+            const target = bindingElement.parent.parent;
+
+            let parentAccess: ir.Expr;
+            let parentType: Type;
+
+            if (target.kind === SK.BindingElement) {
+                const parent = bindingElementAccessExpression(target as BindingElement);
+                parentAccess = parent[0];
+                parentType = parent[1];
+            }
+            else {
+                parentType = typeOf(target);
+            }
+
+            const propertyName = (bindingElement.propertyName || bindingElement.name) as Identifier;
+
+            if (isPossiblyGenericClassType(parentType)) {
+                const info = getClassInfo(parentType)
+                parentAccess = parentAccess || emitLocalLoad(target as VariableDeclaration);
+
+                const myType = checker.getTypeOfSymbolAtLocation(checker.getPropertyOfType(parentType, propertyName.text), bindingElement);
+                return [
+                    ir.op(EK.FieldAccess, [parentAccess], fieldIndexCore(info, getFieldInfo(info, propertyName.text), myType)),
+                    myType
+                ];
+            } else {
+                throw unhandled(bindingElement, lf("bad field access"), 9247)
+            }
         }
 
         function emitClassExpression(node: ClassExpression) { }
@@ -2849,7 +3000,9 @@ ${lbl}: .short 0xffff
             node.members.forEach(emit)
         }
         function emitInterfaceDeclaration(node: InterfaceDeclaration) {
-            //userError(9228, lf("interfaces are not currently supported"))
+            let attrs = parseComments(node)
+            if (attrs.autoCreate)
+                autoCreateFunctions[attrs.autoCreate] = true
         }
         function emitEnumDeclaration(node: EnumDeclaration) {
             //No code needs to be generated, enum names are replaced by constant values in generated code
@@ -3114,7 +3267,8 @@ ${lbl}: .short 0xffff
     }
 
     export function emptyExtInfo(): ExtensionInfo {
-        return {
+        const pio = pxt.appTarget.compileService && !!pxt.appTarget.compileService.platformioIni;
+        const r: ExtensionInfo = {
             functions: [],
             generatedFiles: {},
             extensionFiles: {},
@@ -3122,12 +3276,11 @@ ${lbl}: .short 0xffff
             compileData: "",
             shimsDTS: "",
             enumsDTS: "",
-            onlyPublic: true,
-            yotta: {
-                dependencies: {},
-                config: {}
-            }
+            onlyPublic: true
         }
+        if (pio) r.platformio = { dependencies: {} };
+        else r.yotta = { config: {}, dependencies: {} };
+        return r;
     }
 
 

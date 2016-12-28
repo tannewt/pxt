@@ -5,7 +5,7 @@ import * as hwdbg from "./hwdbg";
 import Cloud = pxt.Cloud;
 
 function browserDownloadAsync(text: string, name: string, contentType: string): Promise<void> {
-    let url = pxt.BrowserUtils.browserDownloadText(
+    let url = pxt.BrowserUtils.browserDownloadBinText(
         text,
         name,
         contentType,
@@ -15,16 +15,30 @@ function browserDownloadAsync(text: string, name: string, contentType: string): 
     return Promise.resolve();
 }
 
-function browserDownloadDeployCoreAsync(resp: pxtc.CompileResult): Promise<void> {
-    let hex = resp.outfiles[pxtc.BINARY_HEX]
-    let fn = pkg.genFileName(".hex");
-    pxt.debug('saving ' + fn)
-    let url = pxt.BrowserUtils.browserDownloadText(
-        hex,
-        fn,
-        pxt.appTarget.compile.hexMimeType,
-        e => core.errorNotification(lf("saving file failed..."))
-    );
+export function browserDownloadDeployCoreAsync(resp: pxtc.CompileResult): Promise<void> {
+    let url = ""
+    let fn = ""
+    if (pxt.appTarget.compile.useUF2) {
+        let uf2 = resp.outfiles[pxtc.BINARY_UF2]
+        fn = pkg.genFileName(".uf2");
+        pxt.debug('saving ' + fn)
+        url = pxt.BrowserUtils.browserDownloadBase64(
+            uf2,
+            fn,
+            "application/x-uf2",
+            e => core.errorNotification(lf("saving file failed..."))
+        );
+    } else {
+        let hex = resp.outfiles[pxtc.BINARY_HEX]
+        fn = pkg.genFileName(".hex");
+        pxt.debug('saving ' + fn)
+        url = pxt.BrowserUtils.browserDownloadBinText(
+            hex,
+            fn,
+            pxt.appTarget.compile.hexMimeType,
+            e => core.errorNotification(lf("saving file failed..."))
+        );
+    }
 
     if (!resp.success) {
         return core.confirmAsync({
@@ -32,16 +46,11 @@ function browserDownloadDeployCoreAsync(resp: pxtc.CompileResult): Promise<void>
             body: lf("Ooops, looks like there are errors in your program."),
             hideAgree: true,
             disagreeLbl: lf("Close")
-        }).then(() => {});
+        }).then(() => { });
     }
 
-    let uploader = !!pxt.storage.getLocal("uploader");
-    if (uploader) {
-        core.infoNotification(lf("Save the .hex file to your Downloads folder and make sure the uploader is running."))
-        return Promise.resolve();
-    }
-    else
-        return showUploadInstructionsAsync(fn, url);
+    if (resp.saveOnly) return Promise.resolve();
+    else return showUploadInstructionsAsync(fn, url);
 }
 
 //Searches the known USB image, matching on platform and browser
@@ -93,13 +102,7 @@ ${instructions.map((step: UploadInstructionStep, i: number) =>
     ${step.body ? step.body : ""}
     ${step.image && namedUsbImage(step.image) ? `<img src="${namedUsbImage(step.image)}"  alt="${step.title}" class="ui centered large image" />` : ""}
 </div>`).join('')}
-</div>
-${pxt.BrowserUtils.isWindows() ? `
-    <div class="ui info message landscape desktop only">
-        ${lf("Tired of copying the .hex file?")}
-        <a href="/uploader" target="_blank">${lf("Install the Uploader!")}</a>
-    </div>
-    ` : ""}`,
+</div>`,
         hideCancel: true,
         agreeLbl: lf("Done!"),
         buttons: !docUrl ? undefined : [{
@@ -116,16 +119,16 @@ function localhostDeployCoreAsync(resp: pxtc.CompileResult): Promise<void> {
     pxt.debug('local deployment...');
     core.infoNotification(lf("Uploading .hex file..."));
     let deploy = () => Util.requestAsync({
-        url: "http://localhost:3232/api/deploy",
+        url: "/api/deploy",
         headers: { "Authorization": Cloud.localToken },
         method: "POST",
         data: resp,
-        allowHttpErrors: true
+        allowHttpErrors: true // To prevent "Network request failed" warning in case of error. We're not actually doing network requests in localhost scenarios
     }).then(r => {
-        if (r.statusCode == 404) {
-            core.errorNotification(lf("Please connect your {0} to your computer and try again", pxt.appTarget.appTheme.boardName));
-        } else if (r.statusCode !== 200) {
+        if (r.statusCode !== 200) {
             core.errorNotification(lf("There was a problem, please try again"));
+        } else if (r.json["boardCount"] === 0) {
+            core.warningNotification(lf("Please connect your {0} to your computer and try again", pxt.appTarget.appTheme.boardName));
         }
     });
 
@@ -136,7 +139,10 @@ function localhostDeployCoreAsync(resp: pxtc.CompileResult): Promise<void> {
 }
 
 export function initCommandsAsync(): Promise<void> {
-    if (Cloud.isLocalHost() && Cloud.localToken && !/forceHexDownload/i.test(window.location.href)) { // local node.js
+    if (pxt.winrt.isWinRT()) { // window app
+        pxt.commands.deployCoreAsync = pxt.winrt.deployCoreAsync;
+        pxt.commands.browserDownloadAsync = pxt.winrt.browserDownloadAsync;
+    } else if (Cloud.isLocalHost() && Cloud.localToken && !/forceHexDownload/i.test(window.location.href)) { // local node.js
         pxt.commands.deployCoreAsync = localhostDeployCoreAsync;
         pxt.commands.browserDownloadAsync = browserDownloadAsync;
     } else { // in browser

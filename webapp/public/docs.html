@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-framework="typescript">
+<html lang="@locale@" data-framework="typescript">
 
 <head>
     <meta charset="utf-8">
@@ -66,8 +66,9 @@
     </style>
 </head>
 
-<body>
+<body id="docs">
     <style type="text/css">
+        @import "/cdn/highlight.js/styles/vs.css";
         @import "/cdn/semantic.css";
         @import "/cdn/icons.css";
     </style>
@@ -83,19 +84,7 @@
         var pxtConfig = null;
     </script>
     <!-- @include apptracking.html -->
-    <script type="text/javascript" src="/cdn/lzma/lzma_worker-min.js"></script>
-    <script type="text/javascript" src="/cdn/marked/marked.min.js"></script>
     <script type="text/javascript" src="/cdn/jquery.js"></script>
-    <script type="text/javascript" src="/cdn/typescript.js"></script>
-    <script type="text/javascript" src="/cdn/blockly/blockly_compressed.js"></script>
-    <script type="text/javascript" src="/cdn/blockly/blocks_compressed.js"></script>
-    <script type="text/javascript" src="/cdn/blockly/msg/js/en.js"></script>
-    <script type="text/javascript" src="/cdn/pxtlib.js"></script>
-    <script type="text/javascript" src="/cdn/pxtblocks.js"></script>
-    <script type="text/javascript" src="/cdn/pxteditor.js"></script>
-    <script type="text/javascript" src="/cdn/pxtsim.js"></script>
-    <script type="text/javascript" src="/cdn/pxtrunner.js"></script>
-    <script type="text/javascript" src="/cdn/semantic.js"></script>
     <script type="text/javascript" src="/embed.js"></script>
     <script type="text/javascript">
         (function () {    
@@ -103,6 +92,7 @@
         var content = document.getElementById('content');        
         ksRunnerReady(function() {
             pxt.docs.requireMarked = function() { return marked; }
+            pxt.docs.requireHighlightJs = function() { return hljs; }
             var projectid = /projectid=([^&?]+)/i.exec(window.location.href); 
             var code = /code=([^&?]+)/i.exec(window.location.href);
             var md = /md=([^&?]+)/i.exec(window.location.href);

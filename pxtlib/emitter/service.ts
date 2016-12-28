@@ -5,6 +5,13 @@ namespace ts.pxtc {
         type: string;
         initializer?: string;
         defaults?: string[];
+        properties?: PropertyDesc[];
+    }
+
+
+    export interface PropertyDesc {
+        name: string;
+        type: string;
     }
 
     export enum SymbolKind {
@@ -15,7 +22,9 @@ namespace ts.pxtc {
         Variable,
         Module,
         Enum,
-        EnumMember
+        EnumMember,
+        Class,
+        Interface,
     }
 
     export interface SymbolInfo {
@@ -25,6 +34,7 @@ namespace ts.pxtc {
         kind: SymbolKind;
         parameters: ParameterDesc[];
         retType: string;
+        extendsTypes?: string[]; // for classes and interfaces
         isContextual?: boolean;
         qName?: string;
         pkg?: string;
@@ -60,6 +70,40 @@ namespace ts.pxtc {
 . . . . .
 . . . . .
 `
+
+    export function localizeApisAsync(apis: pxtc.ApisInfo, mainPkg: pxt.MainPackage): Promise<pxtc.ApisInfo> {
+        const lang = pxtc.Util.userLanguage();
+        if (pxtc.Util.userLanguage() == "en") return Promise.resolve(apis);
+
+        return mainPkg.localizationStringsAsync(lang)
+            .then(loc => Util.values(apis.byQName).forEach(fn => {
+                const jsDoc = loc[fn.qName]
+                if (jsDoc) {
+                    fn.attributes.jsDoc = jsDoc;
+                    if (fn.parameters)
+                        fn.parameters.forEach(pi => pi.description = loc[`${fn.qName}|param|${pi.name}`] || pi.description);
+                }
+                if (fn.attributes.block) {
+                    const locBlock = loc[`${fn.qName}|block`];
+                    if (locBlock) {
+                        fn.attributes.block = locBlock;
+                    }
+                }
+                const nsDoc = loc['{id:category}' + Util.capitalize(fn.qName)];
+                if (nsDoc) {
+                    fn.attributes.block = nsDoc;
+                }
+            }))
+            .then(() => apis);
+    }
+
+    /**
+     * Unlocalized category name for a symbol
+     */
+    export function blocksCategory(si: SymbolInfo): string {
+        const n = !si ? undefined : (si.attributes.blockNamespace || si.namespace);
+        return n ? Util.capitalize(n.split('.')[0]) : undefined;
+    }
 
     function renderDefaultVal(apis: pxtc.ApisInfo, p: pxtc.ParameterDesc, imgLit: boolean, cursorMarker: string): string {
         if (p.initializer) return p.initializer
@@ -113,6 +157,10 @@ namespace ts.pxtc {
                 return SymbolKind.Enum;
             case SK.EnumMember:
                 return SymbolKind.EnumMember;
+            case SK.ClassDeclaration:
+                return SymbolKind.Class;
+            case SK.InterfaceDeclaration:
+                return SymbolKind.Interface;
             default:
                 return SymbolKind.None
         }
@@ -185,23 +233,49 @@ namespace ts.pxtc {
                     pkg = m[1]
             }
 
+            let extendsTypes: string[] = undefined
+
+            if (kind == SymbolKind.Class || kind == SymbolKind.Interface) {
+                let cl = stmt as ClassLikeDeclaration
+                extendsTypes = []
+                if (cl.heritageClauses)
+                    for (let h of cl.heritageClauses) {
+                        if (h.types) {
+                            for (let t of h.types) {
+                                extendsTypes.push(typeOf(t, t))
+                            }
+                        }
+                    }
+            }
+
             return {
                 kind,
                 namespace: m ? m[1] : "",
                 name: m ? m[2] : qName,
                 attributes,
                 pkg,
+                extendsTypes,
                 retType: kind == SymbolKind.Module ? "" : typeOf(decl.type, decl, hasParams),
                 parameters: !hasParams ? null : (decl.parameters || []).map(p => {
                     let n = getName(p)
                     let desc = attributes.paramHelp[n] || ""
                     let m = /\beg\.?:\s*(.+)/.exec(desc)
+                    let props: PropertyDesc[];
+                    if (attributes.mutate && p.type.kind === SK.FunctionType) {
+                        const callBackSignature = typechecker.getSignatureFromDeclaration(p.type as FunctionTypeNode);
+                        const callbackParameters = callBackSignature.getParameters();
+                        assert(callbackParameters.length > 0);
+                        props = typechecker.getTypeAtLocation(callbackParameters[0].valueDeclaration).getProperties().map(prop => {
+                            return { name: prop.getName(), type: typechecker.typeToString(typechecker.getTypeOfSymbolAtLocation(prop, callbackParameters[0].valueDeclaration)) }
+                        });
+                    }
                     return {
                         name: n,
                         description: desc,
                         type: typeOf(p.type, p),
                         initializer: p.initializer ? p.initializer.getText() : attributes.paramDefl[n],
-                        defaults: m && m[1].trim() ? m[1].split(/,\s*/).map(e => e.trim()) : undefined
+                        defaults: m && m[1].trim() ? m[1].split(/,\s*/).map(e => e.trim()) : undefined,
+                        properties: props
                     }
                 })
             }
@@ -219,13 +293,15 @@ namespace ts.pxtc {
 
     export interface GenMarkdownOptions {
         package?: boolean;
+        locs?: boolean;
+        docs?: boolean;
     }
 
     export function genMarkdown(pkg: string, apiInfo: ApisInfo, options: GenMarkdownOptions = {}): pxt.Map<string> {
-        let files: pxt.Map<string> = {};
-        let infos = Util.values(apiInfo.byQName);
-        let namespaces = infos.filter(si => si.kind == SymbolKind.Module)
-        namespaces.sort(compareSymbol)
+        const files: pxt.Map<string> = {};
+        const infos = Util.values(apiInfo.byQName);
+        const namespaces = infos.filter(si => si.kind == SymbolKind.Module).sort(compareSymbol);
+        const enumMembers = infos.filter(si => si.kind == SymbolKind.EnumMember).sort(compareSymbol);
 
         let locStrings: pxt.Map<string> = {};
         let jsdocStrings: pxt.Map<string> = {};
@@ -233,7 +309,13 @@ namespace ts.pxtc {
         let reference = ""
         const writeRef = (s: string) => reference += s + "\n"
         const writeLoc = (si: SymbolInfo) => {
-            if (!si.qName) return;
+            if (!options.locs || !si.qName) {
+                return;
+            }
+            // must match blockly loader
+            const ns = ts.pxtc.blocksCategory(si);
+            if (ns)
+                locStrings[`{id:category}${ns}`] = ns;
             if (si.attributes.jsDoc)
                 jsdocStrings[si.qName] = si.attributes.jsDoc;
             if (si.attributes.block)
@@ -244,6 +326,7 @@ namespace ts.pxtc {
                 })
         }
         const mapLocs = (m: pxt.Map<string>, name: string) => {
+            if (!options.locs) return;
             let locs: pxt.Map<string> = {};
             Object.keys(m).sort().forEach(l => locs[l] = m[l]);
             files[pkg + name + "-strings.json"] = JSON.stringify(locs, null, 2);
@@ -266,10 +349,10 @@ namespace ts.pxtc {
         writeRef(`# ${pkg} Reference`)
         writeRef('')
         writeRef('```namespaces')
-        for (let ns of namespaces) {
+        for (const ns of namespaces) {
             let nsHelpPages: pxt.Map<string> = {};
             let syms = infos
-                .filter(si => si.namespace == ns.name && !!si.attributes.help)
+                .filter(si => si.namespace == ns.name && !!si.attributes.jsDoc)
                 .sort(compareSymbol)
             if (!syms.length) continue;
 
@@ -303,13 +386,20 @@ namespace ts.pxtc {
             writeNs('```')
             writePackage(writeNs);
             writeHelpPages(nsHelpPages, writeNs);
-            files["reference/" + ns.name + '.md'] = nsmd;
+            if (options.docs)
+                files["reference/" + ns.name + '.md'] = nsmd;
         }
+        if (options.locs)
+            enumMembers.forEach(em => {
+                if (em.attributes.block) locStrings[`${em.qName}|block`] = em.attributes.block;
+                if (em.attributes.jsDoc) locStrings[em.qName] = em.attributes.jsDoc;
+            });
         writeRef('```');
         writePackage(writeRef);
         writeHelpPages(helpPages, writeRef);
 
-        files[pkg + "-reference.md"] = reference;
+        if (options.docs)
+            files[pkg + "-reference.md"] = reference;
         mapLocs(locStrings, "");
         mapLocs(jsdocStrings, "-jsdoc");
         return files;
@@ -358,8 +448,15 @@ namespace ts.pxtc {
                 }
                 let qName = getFullName(typechecker, stmt.symbol)
                 let si = createSymbolInfo(typechecker, qName, stmt)
-                if (si)
+                if (si) {
+                    let existing = U.lookup(res.byQName, qName)
+                    if (existing) {
+                        si.attributes = parseCommentString(
+                            existing.attributes._source + "\n" +
+                            si.attributes._source)
+                    }
                     res.byQName[qName] = si
+                }
             }
 
             if (stmt.kind == SK.ModuleDeclaration) {
@@ -384,9 +481,34 @@ namespace ts.pxtc {
             srcFile.statements.forEach(collectDecls)
         }
 
+        let toclose: SymbolInfo[] = []
+
         // store qName in symbols
-        for (let qName in res.byQName)
-            res.byQName[qName].qName = qName;
+        for (let qName in res.byQName) {
+            let si = res.byQName[qName]
+            si.qName = qName;
+            si.attributes._source = null
+            if (si.extendsTypes && si.extendsTypes.length) toclose.push(si)
+        }
+
+        // transitive closure of inheritance
+        let closed: Map<boolean> = {}
+        let closeSi = (si: SymbolInfo) => {
+            if (U.lookup(closed, si.qName)) return;
+            closed[si.qName] = true
+            let mine: Map<boolean> = {}
+            mine[si.qName] = true
+            for (let e of si.extendsTypes || []) {
+                mine[e] = true
+                let psi = res.byQName[e]
+                if (psi) {
+                    closeSi(psi)
+                    for (let ee of psi.extendsTypes) mine[ee] = true
+                }
+            }
+            si.extendsTypes = Object.keys(mine)
+        }
+        toclose.forEach(closeSi)
 
         if (legacyOnly) {
             // conflicts with pins.map()
@@ -570,7 +692,7 @@ namespace ts.pxtc.service {
 
         assemble: v => {
             return {
-                words: thumbInlineAssemble(v.fileContent)
+                words: processorInlineAssemble(host.opts.target.nativeType, v.fileContent)
             }
         },
 

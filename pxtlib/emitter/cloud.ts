@@ -19,12 +19,13 @@ namespace pxt.Cloud {
 
     export function isLocalHost(): boolean {
         try {
-            return /^http:\/\/(localhost|127\.0\.0\.1):3232\//.test(window.location.href) && !/nolocalhost=1/.test(window.location.href);
+            return /^http:\/\/(localhost|127\.0\.0\.1):\d+\//.test(window.location.href) && !/nolocalhost=1/.test(window.location.href);
         } catch (e) { return false; }
     }
 
     export function privateRequestAsync(options: Util.HttpRequestOptions) {
         options.url = apiRoot + options.url
+        options.allowGzipPost = true
         if (!Cloud.isOnline()) {
             return offlineError(options.url);
         }
@@ -58,6 +59,27 @@ namespace pxt.Cloud {
         return privateRequestAsync({ url: id + "/text" }).then(resp => {
             return JSON.parse(resp.text)
         })
+    }
+
+    export function downloadMarkdownAsync(docid: string, locale?: string, live?: boolean): Promise<string> {
+        docid = docid.replace(/^\//, "");
+        let url = `md/${pxt.appTarget.id}/${docid}`;
+        if (locale != "en") {
+            url += `?lang=${encodeURIComponent(Util.userLanguage())}`
+            if (live) url += "&live=1"
+        }
+        if (Cloud.isLocalHost() && !live)
+            return Util.requestAsync({
+                url: "/api/" + url,
+                headers: { "Authorization": Cloud.localToken },
+                method: "GET",
+                allowHttpErrors: true
+            }).then(resp => {
+                if (resp.statusCode == 404)
+                    return privateGetTextAsync(url);
+                else return resp.json as string;
+            });
+        else return privateGetTextAsync(url);
     }
 
     export function privateDeleteAsync(path: string) {

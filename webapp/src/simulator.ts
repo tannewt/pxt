@@ -6,8 +6,8 @@ import U = pxt.U
 
 interface SimulatorConfig {
     highlightStatement(stmt: pxtc.LocationInfo): void;
+    restartSimulator(): void;
     editor: string;
-    onCompile(name: string, content: string, contentType: string): void;
 }
 
 export var driver: pxsim.SimulatorDriver;
@@ -31,13 +31,13 @@ export function init(root: HTMLElement, cfg: SimulatorConfig) {
     let options: pxsim.SimulatorDriverOptions = {
         revealElement: (el) => {
             ($(el) as any).transition({
-                animation: 'fly right in',
+                animation: pxt.appTarget.appTheme.simAnimationEnter || 'fly right in',
                 duration: '0.5s',
             })
         },
         removeElement: (el) => {
             ($(el) as any).transition({
-                animation: 'fly right out',
+                animation: pxt.appTarget.appTheme.simAnimationExit || 'fly right out',
                 duration: '0.5s',
                 onComplete: function () {
                     $(el).remove();
@@ -70,7 +70,24 @@ export function init(root: HTMLElement, cfg: SimulatorConfig) {
         onStateChanged: function (state) {
             updateDebuggerButtons()
         },
-        onCompile: cfg.onCompile
+        onSimulatorCommand: (msg: pxsim.SimulatorCommandMessage): void => {
+            switch (msg.command) {
+                case "restart":
+                    cfg.restartSimulator();
+                    break;
+                case "modal":
+                    stop();
+                    core.confirmAsync({
+                        header: msg.header,
+                        body: msg.body,
+                        size: "large",
+                        copyable: msg.copyable,
+                        hideAgree: true,
+                        disagreeLbl: lf("Close")
+                    }).done();
+                    break;
+            }
+        }
     };
     driver = new pxsim.SimulatorDriver($('#simulators')[0], options);
     config = cfg

@@ -65,11 +65,11 @@ parameter = string
 type = string
 ```
 
-* each `field` is mapped to a field in the bock editor
+* each `field` is mapped to a field in the block editor
 * the function parameter are mapped **in order** to `%parameter` argument. The loader automatically builds
 a mapping between the block field names and the function names.
 * the block will automatically switch to external inputs when enough parameters are detected
-* A block type `=type` can be specified optionaly for each parameter. It will be used to populate the shadow type.
+* A block type `=type` can be specified optionally for each parameter. It will be used to populate the shadow type.
 
 ## Supported types
 
@@ -80,6 +80,46 @@ The following types are supported in function signatures that are meant to be ex
 * enums (see below)
 * custom classes that are also exported
 * arrays of the above
+
+## Callbacks with Parameters
+
+APIs that take in a callback function will have that callback converted into a statement input.
+If the callback in the API is designed to take in parameters, the best way to map that pattern
+to the blocks is by passing the callback a single parameter with a class type that contains
+all the other values. For example:
+
+```typescript
+
+export class ArgumentClass {
+    argumentA: number;
+    argumentB: string;
+}
+
+//% mutate=true
+//% mutateText="My Arguments"
+//% mutateDefaults="argumentA;argumentA,argumentB"
+// ...
+export function addSomeEventHandler((a: ArgumentClass) => void) { };
+```
+
+In the above example, setting `mutate=true` will cause this API to use Blockly "mutators"
+to let users change what parameters appear in the blocks. Each parameter will be given an
+optional variable field in the block that defines a variable that can be used within the callback.
+The variable fields compile to object destructuring in the TypeScript code. For example:
+
+```typescript
+
+addSomeEventHandler(({argumentA, argumentB}) => {
+
+})
+
+```
+
+For an example of this pattern in action, see the `radio.onDataPacketReceived` block. The other attributes
+related to mutators include:
+
+* `mutateText` - defines the text that appears in the top block of the Blockly mutator dialog (the dialog that appears when you click the blue gear)
+* `mutateDefaults` - defines the versions of this block that should appear in the toolbox. Block definitions are separated by semicolons and property names should be separated by commas
 
 ## Enums
 
@@ -149,9 +189,11 @@ value is used as the shadow value.
 
 ## Objects and Instance methods
 
-Blocks work best with "flat" C-style APIs. However, it is possible to expose instance methods in blocks as well.
+It is possible to expose instance methods and object factories, either directly
+or with a bit of flattening (which is recommended, as flat, C-style APIs map best to blocks).
 
-```
+### Direct
+```typescript
 //%
 class Message {
     ...
@@ -164,12 +206,92 @@ class Message {
 
 
 You will need to expose a factory method to create your objects as needed. For the example above, we add a function that creates the message:
-```
+
+```typescript
 //% blockId="create_message" block="create message|with %text"
 export function createMessage(text: string) : Message {
     return new Message(text);
 }
 ```
+
+### Auto-create
+
+If object has a reasonable default constructor, and it is harmless to call this 
+constructor even if the variable needs to be overwritten later, then it's useful
+to designate a parameter-less function as auto-create, like this:
+
+```typescript
+namespace images {
+    export function emptyImage(width = 5, height = 5): Image { ... }
+}
+//% autoCreate=images.emptyImage
+class Image {
+    ...
+}
+```
+
+Now, when user adds a block referring to a method of `Image`, a global
+variable will be automatically introduced and initialized with `images.emptyImage()`.
+
+In cases when the default constructor has side effects (eg., configuring a pin),
+or if the default value is most often overridden,
+the `autoCreate` syntax should not be used.
+
+
+### Fixed Instance Set
+
+It is sometimes the case that there is only a fixed number of instances
+of a given class. One example is object representing pins on an electronic board.
+It is possible to expose these instances in a manner similar to an enum:
+
+```typescript
+//% fixedInstances
+class DigitalPin {
+    ...
+    //% blockId=device_set_digital_pin block="digital write|pin %name|to %value"
+    //% blockNamespace=pins
+    digitalWrite(value: number): void { ... }
+}
+
+namespace pins {
+    //% fixedInstance
+    let D0: DigitalPin;
+    //% fixedInstance
+    let D1: DigitalPin;
+}
+```
+
+This will result in a block `digital write pin [D0] to [0]`, where the
+first hold is a dropdown with `D0` and `D1`, and the second hole is a regular
+integer value. The variables `D0` and `D1` can have additional annotations
+(eg., `block="D#0"`). Currently, only variables are supported with `fixedInstance`
+(`let` or `const`).
+
+Fixed instances also support inheritance. For example, consider adding the following
+declarations.
+
+```typescript
+//% fixedInstances
+class AnalogPin extends DigitalPin {
+    ...
+    //% blockId=device_set_analog_pin block="analog write|pin %name|to %value"
+    //% blockNamespace=pins
+    analogWrite(value: number): void { ... }
+}
+
+namespace pins {
+    //% fixedInstance
+    let A0: AnalogPin;
+}
+```
+
+The `analog write` will have a single-option dropdown with `A0`, but
+the optionals on `digital write` will be now `D0`, `D1` and `A0`.
+
+Variables with `fixedInstance` annotations can be added anywhere, at the top-level,
+even in different libraries or namespaces.
+
+This feature is often used with `indexedInstance*` and `noRefCounting` attributes.
 
 ## Ordering
 
@@ -203,7 +325,20 @@ To do so, the ideal setup is:
 - keep a code editor with the TypeScript opened where you can edit the APIs
 - refresh the browser and try out the changes on a dummy program.
 
-Interrestingly, you can design your entire API without implementing it!
+Interestingly, you can design your entire API without implementing it!
+
+## Deprecating Blocks
+
+To deprecate an existing API, you can add the **deprecated** attribute like so:
+
+```
+//% deprecated=true
+```
+
+This will cause the API to still be usable in TypeScript, but prevent the block from appearing in the
+Blockly toolbox. If a user tries to load a project that uses the old API, the project will still load
+correctly as long as the TypeScript API is present. Any deprecated blocks in the project will appear in
+the editor but not the toolbox.
 
 ## API design Tips and Tricks
 

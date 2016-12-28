@@ -18,7 +18,7 @@ let extWeight: pxt.Map<number> = {
 
 export function setupAppTarget(trgbundle: pxt.TargetBundle) {
     //if (!trgbundle.appTheme) trgbundle.appTheme = {};
-    pxt.appTarget = trgbundle
+    pxt.setAppTarget(trgbundle)
 }
 
 export class File {
@@ -27,6 +27,7 @@ export class File {
     diagnostics: pxtc.KsDiagnostic[];
     numDiagnosticsOverride: number;
     virtualSource: File;
+    forceChangeCallback: ((from: string, to: string) => void);
 
     constructor(public epkg: EditorPackage, public name: string, public content: string) { }
 
@@ -76,10 +77,11 @@ export class File {
         data.invalidate("open-meta:" + this.getName())
     }
 
-    setContentAsync(newContent: string) {
+    setContentAsync(newContent: string, force?: boolean) {
         Util.assert(newContent !== undefined);
         this.inSyncWithEditor = true;
         if (newContent != this.content) {
+            let prevContent = this.content;
             this.inSyncWithDisk = false;
             this.content = newContent;
             this.updateStatus();
@@ -89,11 +91,16 @@ export class File {
                         this.inSyncWithDisk = true;
                         this.updateStatus();
                     }
+                    if (force && this.forceChangeCallback) this.forceChangeCallback(prevContent, newContent);
                 })
         } else {
             this.updateStatus();
             return Promise.resolve()
         }
+    }
+
+    setForceChangeCallback(callback: (from: string, to: string) => void) {
+        this.forceChangeCallback = callback;
     }
 }
 
@@ -128,7 +135,7 @@ export class EditorPackage {
             try {
                 let cfg = <pxt.PackageConfig>JSON.parse(cfgFile.content)
                 update(cfg);
-                return cfgFile.setContentAsync(JSON.stringify(cfg, null, 2))
+                return cfgFile.setContentAsync(JSON.stringify(cfg, null, 4) + "\n")
             } catch (e) { }
         }
 
@@ -139,21 +146,22 @@ export class EditorPackage {
         let p = this.ksPkg.resolveDep(pkgid);
         if (!p || p.verProtocol() != "github") return Promise.resolve();
         let parsed = pxt.github.parseRepoId(p.verArgument())
-        return pxt.github.latestVersionAsync(parsed.repo)
+        return pxt.packagesConfigAsync()
+            .then(config => pxt.github.latestVersionAsync(parsed.fullName, config))
             .then(tag => { parsed.tag = tag })
-            .then(() => pxt.github.pkgConfigAsync(parsed.repo, parsed.tag))
+            .then(() => pxt.github.pkgConfigAsync(parsed.fullName, parsed.tag))
             .catch(core.handleNetworkError)
             .then(cfg => this.addDepAsync(cfg.name, pxt.github.stringifyRepo(parsed)));
     }
 
     removeDepAsync(pkgid: string) {
         return this.updateConfigAsync(cfg => delete cfg.dependencies[pkgid])
-            .then(() => this.saveFilesAsync());
+            .then(() => this.saveFilesAsync(true));
     }
 
     addDepAsync(pkgid: string, pkgversion: string) {
         return this.updateConfigAsync(cfg => cfg.dependencies[pkgid] = pkgversion)
-            .then(() => this.saveFilesAsync());
+            .then(() => this.saveFilesAsync(true));
     }
 
     getKsPkg() {
@@ -222,7 +230,7 @@ export class EditorPackage {
         return Util.mapMap(this.files, (k, f) => f.content)
     }
 
-    saveFilesAsync() {
+    saveFilesAsync(immediate?: boolean) {
         if (!this.header) return Promise.resolve();
 
         let cfgFile = this.files[pxt.CONFIG_NAME]
@@ -234,7 +242,7 @@ export class EditorPackage {
             }
         }
         return workspace.saveAsync(this.header, this.getAllFiles())
-            .then(() => this.scheduleSave())
+            .then(() => immediate ? this.savePkgAsync() : this.scheduleSave())
     }
 
     sortedFiles() {
@@ -277,18 +285,18 @@ class Host
         return file ? file.content : null
     }
 
-    writeFile(module: pxt.Package, filename: string, contents: string): void {
-        if (filename == pxt.CONFIG_NAME) {
+    writeFile(module: pxt.Package, filename: string, contents: string, force?: boolean): void {
+        if (filename == pxt.CONFIG_NAME || force) {
             // only write config writes
             let epkg = getEditorPkg(module)
             let file = epkg.files[filename];
-            file.setContentAsync(contents).done();
+            file.setContentAsync(contents, force).done();
             return;
         }
         throw Util.oops("trying to write " + module + " / " + filename)
     }
 
-    getHexInfoAsync(extInfo: pxtc.ExtensionInfo): Promise<any> {
+    getHexInfoAsync(extInfo: pxtc.ExtensionInfo): Promise<pxtc.HexInfo> {
         return pxt.hex.getHexInfoAsync(this, extInfo).catch(core.handleNetworkError);
     }
 

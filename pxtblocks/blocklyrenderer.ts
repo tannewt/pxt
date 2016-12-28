@@ -12,14 +12,15 @@ namespace pxt.blocks {
         blocks.forEach(block => {
             block.moveBy(0, y)
             y += block.getHeightWidth().height
-            y += emPixels; //buffer            
+            y += emPixels; //buffer
         })
     }
 
     export enum BlockLayout {
         Align = 1,
         Shuffle = 2,
-        Clean = 3
+        Clean = 3,
+        Flow = 4
     }
 
     export interface BlocksRenderOptions {
@@ -28,9 +29,10 @@ namespace pxt.blocks {
         clean?: boolean;
         aspectRatio?: number;
         package?: string;
+        snippetMode?: boolean;
     }
 
-    export function render(blocksXml: string, options: BlocksRenderOptions = { emPixels: 14, layout: BlockLayout.Align }): HTMLElement {
+    export function render(blocksXml: string, options: BlocksRenderOptions = { emPixels: 14, layout: BlockLayout.Flow }): HTMLElement {
         if (!workspace) {
             blocklyDiv = document.createElement("div");
             blocklyDiv.style.position = "absolute";
@@ -53,13 +55,15 @@ namespace pxt.blocks {
         try {
             let text = blocksXml || `<xml xmlns="http://www.w3.org/1999/xhtml"></xml>`;
             let xml = Blockly.Xml.textToDom(text);
-            Blockly.Xml.domToWorkspace(workspace, xml);
+            Blockly.Xml.domToWorkspace(xml, workspace);
 
             switch (options.layout) {
                 case BlockLayout.Align:
                     pxt.blocks.layout.verticalAlign(workspace, options.emPixels); break;
                 case BlockLayout.Shuffle:
                     pxt.blocks.layout.shuffle(workspace, options.aspectRatio); break;
+                case BlockLayout.Flow:
+                    pxt.blocks.layout.flow(workspace, options.aspectRatio); break;
                 case BlockLayout.Clean:
                     if ((<any>workspace).cleanUp_)
                         (<any>workspace).cleanUp_();
@@ -86,7 +90,7 @@ namespace pxt.blocks {
             return svg[0];
 
         } catch (e) {
-            pxt.reportException(e, { blocks: blocksXml });
+            pxt.reportException(e);
             return undefined;
         }
     }

@@ -1,0 +1,68 @@
+/*******************************
+     User Global Variables
+*******************************/
+
+@primaryColor: @pink;
+@secondaryColor: @grey;
+
+@red:#E81123;
+@orange:#D83B01;
+@yellow:#FFB900;
+@green:#107C10;
+@teal:#008272;
+@blue:#0078D7;
+@violet:#B4009E;
+@purple:#5C2D91;
+@pink:#E2008C;
+@brown:#00BCF2;
+@grey:#505050;
+
+@pageBackground: #ffffff;
+
+
+/*-------------------
+     Fonts
+--------------------*/
+
+@importGoogleFonts: false;
+
+@docsHeaderFont: @headerFont;
+@docsPageFont: @pageFont;
+
+/*-------------------
+   Breakpoints
+--------------------*/
+
+@mobileEditorBreakpoint            : 63rem;
+@tabletEditorBreakpoint            : 79rem;
+@computerEditorBreakpoint          : 91rem;
+@largeMonitorEditorBreakpoint      : 99rem;
+@widescreenMonitorEditorBreakpoint : 119rem;
+
+@tallEditorBreakpoint: 44rem;
+
+/* Responsive */
+@largestMobileEditorBreakpoint       : (@tabletEditorBreakpoint - 1px);
+@largestTabletEditorBreakpoint       : (@computerEditorBreakpoint - 1px);
+@largestSmallMonitorEditorBreakpoint :(@largeMonitorEditorBreakpoint - 1px);
+@largestLargeMonitorEditorBreakpoint : (@widescreenMonitorBreakpoint - 1px);
+
+/*******************************
+     PXT Variables
+*******************************/
+
+@mainMenuHeight: 3.6rem;
+@mobileMenuHeight: 4.4rem;
+
+@sidedocsButtonsTop: (@mainMenuHeight + 1rem);
+@sidedocsButtonsRight: 4.25rem;
+
+@sideBarWidth: 22rem;
+@simulatorWidth: 27rem;
+@simulatorWidthSmall: 20rem;
+
+@simulatorBackground: #fff;
+
+@blocklyToolboxColor: rgba(0, 0, 0, 0.05);
+@blocklySvgColor: #fff;
+@trashIconColor: @primaryColor;

@@ -801,16 +801,6 @@ class EditorTools extends data.Component<ISettingsProps, {}> {
         this.props.parent.editor.zoomOut();
     }
 
-    startStopSimulator(view?: string) {
-        pxt.tickEvent("editortools.startStopSimulator", {view: view, collapsed: this.getCollapsedState()});
-        this.props.parent.startStopSimulator();
-    }
-
-    restartSimulator(view?: string) {
-        pxt.tickEvent("editortools.restart", {view: view, collapsed: this.getCollapsedState()});
-        this.props.parent.restartSimulator();
-    }
-
     toggleCollapse(view?: string) {
         const state = this.props.parent.state;
         pxt.tickEvent("editortools.toggleCollapse", {view: view, collapsedTo: '' + !state.collapseEditorTools});
@@ -849,6 +839,7 @@ class EditorTools extends data.Component<ISettingsProps, {}> {
         const runTooltip = state.running ? lf("Stop the simulator") : lf("Start the simulator");
         const makeTooltip = lf("Open assembly instructions");
         const restartTooltip = lf("Restart the simulator");
+        const fullscreenTooltip = this.props.parent.state.fullscreen ? lf("Exit fullscreen mode") : lf("Launch in fullscreen");
         const collapseTooltip = collapsed ? lf("Show the simulator") : lf("Hide the simulator");
 
         const hasUndo = this.props.parent.editor.hasUndo();
@@ -856,6 +847,7 @@ class EditorTools extends data.Component<ISettingsProps, {}> {
 
         const run = true;
         const restart = run && !simOpts.hideRestart;
+        const fullscreen = run && !simOpts.hideFullscreen;
 
         return <div className="ui equal width grid right aligned padded">
                     <div className="column mobile only">
@@ -883,11 +875,11 @@ class EditorTools extends data.Component<ISettingsProps, {}> {
                         <div className="ui equal width grid">
                             <div className="left aligned two wide column">
                                 <div className="ui vertical icon small buttons">
-                                    {run ? <sui.Button class="" key='runmenubtn' icon={state.running ? "stop" : "play"} title={runTooltip} onClick={() => this.startStopSimulator('mobile') } /> : undefined }
-                                    {restart ? <sui.Button key='restartbtn' class={`restart-button`} icon="refresh" title={restartTooltip} onClick={() => this.restartSimulator('mobile') } /> : undefined }
+                                    {run ? <sui.Button class="" key='runmenubtn' icon={state.running ? "stop" : "play"} title={runTooltip} onClick={() => this.props.parent.startStopSimulator('mobile') } /> : undefined }
                                 </div>
                                 <div className="row" style={{paddingTop: "1rem"}}>
                                     <div className="ui vertical icon small buttons">
+                                        {fullscreen ? <sui.Button key='fullscreenbtn' class={`fullscreen-button`} icon={`${this.props.parent.state.fullscreen ? 'compress' : 'maximize'}`} title={fullscreenTooltip} onClick={() => this.props.parent.toggleSimulatorFullscreen('mobile') } /> : undefined }
                                         <sui.Button icon={`${collapsed ? 'toggle up' : 'toggle down'}`} class="collapse-button" title={collapseTooltip} onClick={() => this.toggleCollapse('mobile') } />
                                     </div>
                                 </div>
@@ -938,11 +930,11 @@ class EditorTools extends data.Component<ISettingsProps, {}> {
                         : <div className="ui grid">
                             <div className="left aligned two wide column">
                                 <div className="ui vertical icon small buttons">
-                                    {run ? <sui.Button role="menuitem" class="" key='runmenubtn' icon={state.running ? "stop" : "play"} title={runTooltip} onClick={() => this.startStopSimulator('tablet') } /> : undefined }
-                                    {restart ? <sui.Button key='restartbtn' class={`restart-button`} icon="refresh" title={restartTooltip} onClick={() => this.restartSimulator('tablet') } /> : undefined }
+                                    {run ? <sui.Button role="menuitem" class="" key='runmenubtn' icon={state.running ? "stop" : "play"} title={runTooltip} onClick={() => this.props.parent.startStopSimulator('tablet') } /> : undefined }
                                 </div>
                                 <div className="row" style={{paddingTop: "1rem"}}>
                                     <div className="ui vertical icon small buttons">
+                                        {fullscreen ? <sui.Button key='fullscreenbtn' class={`fullscreen-button`} icon={`${this.props.parent.state.fullscreen ? 'compress' : 'maximize'}`} title={fullscreenTooltip} onClick={() => this.props.parent.toggleSimulatorFullscreen('tablet') } /> : undefined }
                                         <sui.Button icon={`${collapsed ? 'toggle up' : 'toggle down'}`} class="collapse-button" title={collapseTooltip} onClick={() => this.toggleCollapse('tablet') } />
                                     </div>
                                 </div>
@@ -1013,6 +1005,49 @@ class EditorTools extends data.Component<ISettingsProps, {}> {
                                 </div>
                             </div>
                         </div>
+                    </div>
+                </div>;
+    }
+}
+
+class FullscreenToolbar extends data.Component<ISettingsProps, {}> {
+    constructor(props: ISettingsProps) {
+        super(props);
+    }
+
+    render() {
+        const state = this.props.parent.state;
+        const hideEditorFloats = state.hideEditorFloats;
+        const collapsed = state.hideEditorFloats || state.collapseEditorTools;
+        const isEditor = this.props.parent.editor == this.props.parent.blocksEditor || this.props.parent.editor == this.props.parent.textEditor;
+        if (!isEditor) return <div />;
+
+        const targetTheme = pxt.appTarget.appTheme;
+        const compile = pxt.appTarget.compile;
+        const compileBtn = compile.hasHex;
+        const simOpts = pxt.appTarget.simulator;
+        const make = !sandbox && state.showParts && simOpts && (simOpts.instructions || (simOpts.parts && pxt.options.debug));
+        const compileTooltip = lf("Download your code to the {0}", targetTheme.boardName);
+        const compileLoading = !!state.compiling;
+        const runTooltip = state.running ? lf("Stop the simulator") : lf("Start the simulator");
+        const makeTooltip = lf("Open assembly instructions");
+        const restartTooltip = lf("Restart the simulator");
+        const fullscreenTooltip = this.props.parent.state.fullscreen ? lf("Exit fullscreen mode") : lf("Launch in fullscreen");
+        const collapseTooltip = collapsed ? lf("Show the simulator") : lf("Hide the simulator");
+
+        const hasUndo = this.props.parent.editor.hasUndo();
+        const hasRedo = this.props.parent.editor.hasRedo();
+
+        const run = true;
+        const restart = run && !simOpts.hideRestart;
+        const fullscreen = run && !simOpts.hideFullscreen;
+
+        return <div className="ui equal width grid right aligned padded">
+                    <div className="column mobile only">
+                    </div>
+                    <div className="column tablet only">
+                    </div>
+                    <div className="column computer only">
                     </div>
                 </div>;
     }
@@ -1993,22 +2028,6 @@ export class ProjectView extends data.Component<IAppProps, IAppState> {
             .done();
     }
 
-    startStopSimulator() {
-        if (this.state.running) {
-            pxt.tickEvent('simulator.stop')
-            this.stopSimulator()
-        } else {
-            pxt.tickEvent('simulator.start')
-            this.startSimulator();
-        }
-    }
-
-    restartSimulator() {
-        pxt.tickEvent('simulator.restart')
-        this.stopSimulator();
-        this.startSimulator();
-    }
-
     startSimulator() {
         pxt.tickEvent('simulator.start')
         this.saveFileAsync()
@@ -2020,13 +2039,35 @@ export class ProjectView extends data.Component<IAppProps, IAppState> {
         this.setState({ running: false })
     }
 
-    toggleSimulatorFullscreen() {
-        pxt.tickEvent("simulator.fullscreen", {view: 'computer', fullScreenTo: '' + !this.state.fullscreen});
+    private getCollapsedState(): string {
+        return '' + this.state.collapseEditorTools;
+    }
+
+    startStopSimulator(view: string = 'computer') {
+        pxt.tickEvent("editortools.startStopSimulator", {view: view, collapsed: this.getCollapsedState()});
+        if (this.state.running) {
+            pxt.tickEvent('simulator.stop')
+            this.stopSimulator()
+        } else {
+            pxt.tickEvent('simulator.start')
+            this.startSimulator();
+        }
+    }
+
+    restartSimulator(view: string = 'computer') {
+        pxt.tickEvent("editortools.fullscreen", {view: view, collapsed: this.getCollapsedState()});
+        pxt.tickEvent('simulator.restart')
+        this.stopSimulator();
+        this.startSimulator();
+    }
+
+    toggleSimulatorFullscreen(view: string = 'computer') {
+        pxt.tickEvent("editortools.fullscreen", {view: view, collapsed: this.getCollapsedState()});
         this.setState({fullscreen: !this.state.fullscreen});
     }
 
-    toggleMute() {
-        pxt.tickEvent("simulator.mute", {view: 'computer', muteTo: '' + !this.state.mute});
+    toggleMute(view: string = 'computer') {
+        pxt.tickEvent("simulator.mute", {view: view, muteTo: '' + !this.state.mute});
         simulator.mute(!this.state.mute);
         this.setState({mute: !this.state.mute});
     }
@@ -2441,6 +2482,7 @@ export class ProjectView extends data.Component<IAppProps, IAppState> {
                 </div>
                 <div id="editortools" role="complementary">
                     <EditorTools ref="editortools" parent={this} />
+                    <FullscreenToolbar ref="fullscreensimtools" parent={this} />
                 </div>
                 {sideDocs ? <SideDocs ref="sidedoc" parent={this} /> : undefined}
                 {!sandbox && targetTheme.organizationWideLogo && targetTheme.organizationLogo ? <div><img className="organization ui landscape hide" src={Util.toDataUri(targetTheme.organizationLogo) } /> <img className="organization ui landscape only" src={Util.toDataUri(targetTheme.organizationWideLogo) } /></div> : undefined}

@@ -60,7 +60,7 @@ task('testdecompilererrors', ['built/pxt.js'], { async: true }, function () {
     cmdIn(this, "tests/decompile-test/errors", 'node ../../../built/pxt.js testdecompilererrors .')
 })
 
-task('testpkgconflicts', ['built/pxt.js'], /*{ async: true }*/, function () {
+task('testpkgconflicts', ['built/pxt.js']/*, { async: true }*/, function () {
     //cmdIn(this, "tests/pkgconflicts", 'node ../../built/pxt.js testpkgconflicts')
     // TEMP TESTING FOR TRAVIS INVESTIGATION
     console.log("PATH: " + process.env["PATH"]);

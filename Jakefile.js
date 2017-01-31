@@ -66,12 +66,14 @@ task('testpkgconflicts', ['built/pxt.js']/*, { async: true }*/, function () {
     console.log("PATH: " + process.env["PATH"]);
     var cp = require("child_process");
     try {
-        cp.spawnSync("node", ["-v"], {cwd: "tests/pkgconflicts", stdio: "inherit"});
+        var res = cp.spawnSync("node", ["-v"], {cwd: "tests/pkgconflicts"});
+        console.log(res.stdout);
     } catch (e) {
         console.log(e.message);
     }
     try {
-        cp.spawnSync("node", ["../../built/pxt.js testpkgconflicts"], {cwd: "tests/pkgconflicts", stdio: "inherit"});
+        var res = cp.spawnSync("node", ["../../built/pxt.js testpkgconflicts"], {cwd: "tests/pkgconflicts"});
+        console.log(res.stdout);
     } catch (e) {
         console.log(e.message);
     }

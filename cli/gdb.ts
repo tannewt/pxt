@@ -75,7 +75,17 @@ export function startAsync(c: commandParser.ParsedCommand) {
     let oargs = getOpenOcdPath()
 
     fs.writeFileSync("built/openocd.gdb",
-        `target extended-remote localhost:3333\n`)
+        `
+target extended-remote localhost:3333
+si
+define rr
+  set *((uint32_t*)(0x20008000 - 4)) = 0xf02669ef
+  r
+end
+echo \\n
+echo On SAMD21 use 'rr' command to re-run target. Either setup some breakpoints first or hit Ctrl-C.\\n
+echo \\n
+`)
 
     pxt.log("starting openocd: " + oargs.join(" "))
 

@@ -7,21 +7,32 @@ import * as hidbridge from "./hidbridge"
 
 import Cloud = pxt.Cloud;
 import U = pxt.Util;
+import H = pxt.HF2;
 
-const HF2_DBG_GET_GLOBAL_STATE = 0x53fc66e0;
+const HF2_DBG_GET_GLOBAL_STATE = 0x53fc66e0
+const HF2_DBG_RESUME = 0x27a55931
+const HF2_DBG_SET_BREAKPOINTS = 0xcfdeea17
 
-const r32 = pxt.HF2.read32
+const HF2_EV_DBG_PAUSED = 0x3692f9fd
+
+const r32 = H.read32
+
+interface StateInfo {
+    numGlobals: number;
+    globalsPtr: number;
+}
 
 let isHalted = false
 let lastCompileResult: pxtc.CompileResult;
-let haltCheckRunning = false
 let onHalted = Promise.resolve();
 let haltHandler: () => void;
-let cachedStateInfo: StateInfo
+let cachedStaticState: StateInfo
 let nextBreakpoints: number[] = []
 let currBreakpoint: pxtc.Breakpoint;
 let lastDebugStatus: number;
 let callInfos: pxt.Map<ExtCallInfo>;
+
+let hid: pxt.HF2.Wrapper
 
 interface ExtCallInfo {
     from: pxtc.ProcDebugInfo;
@@ -35,15 +46,18 @@ export var postMessage: (msg: pxsim.DebuggerMessage) => void;
 function clearAsync() {
     isHalted = false
     lastCompileResult = null
-    cachedStateInfo = null
+    cachedStaticState = null
     lastDebugStatus = null
     return Promise.resolve()
 }
 
-function coreHalted() {
+function corePaused(buf: Uint8Array) {
     return getHwStateAsync()
         .then(st => {
             nextBreakpoints = []
+
+            let w = H.decodeU32LE(buf)
+            let pc = w[0]
 
             let globals: pxsim.Variables = {}
             st.globals.slice(1).forEach((v, i) => {
@@ -53,17 +67,6 @@ function coreHalted() {
                 else
                     globals["?" + i] = v
             })
-
-            let pc = st.machineState.registers[15]
-
-            let final = () => Promise.resolve()
-
-            let stepInBkp = lastCompileResult.procDebugInfo.filter(p => p.bkptLoc == pc)[0]
-            if (stepInBkp) {
-                pc = stepInBkp.codeStartLoc
-                st.machineState.registers[15] = pc
-                final = () => restoreAsync(st.machineState)
-            }
 
             let bb = lastCompileResult.breakpoints
             let brkMatch = bb[0]
@@ -84,23 +87,8 @@ function coreHalted() {
                 stackframes: []
             }
             postMessage(msg)
-            return final()
         })
         .then(haltHandler)
-}
-
-function haltCheckAsync(): Promise<void> {
-    if (isHalted)
-        return Promise.delay(100).then(haltCheckAsync)
-    return workerOpAsync("status")
-        .then(res => {
-            if (res.isHalted) {
-                isHalted = true
-                coreHalted()
-            }
-            return Promise.delay(300)
-        })
-        .then(haltCheckAsync)
 }
 
 function clearHalted() {
@@ -108,25 +96,21 @@ function clearHalted() {
     onHalted = new Promise<void>((resolve, reject) => {
         haltHandler = resolve
     })
-    if (!haltCheckRunning) {
-        haltCheckRunning = true
-        haltCheckAsync()
-    }
 }
 
 function writeDebugStatusAsync(v: number) {
     if (v === lastDebugStatus) return Promise.resolve()
     lastDebugStatus = v
-    return writeMemAsync(cachedStateInfo.globalsPtr, [v])
+    return hid.writeWordsAsync(cachedStaticState.globalsPtr, [v])
 }
 
 function setBreakpointsAsync(addrs: number[]) {
-    return workerOpAsync("breakpoints", { addrs: addrs })
+    return hid.talkAsync(HF2_DBG_SET_BREAKPOINTS, H.encodeU32LE(addrs))
 }
 
 export function startDebugAsync() {
     return clearAsync()
-        .then(() => compiler.compileAsync({ native: true }))
+        .then(() => compiler.compileAsync({ native: true, debug: true }))
         .then(res => {
             lastCompileResult = res
             callInfos = {}
@@ -153,7 +137,11 @@ export function startDebugAsync() {
             }
             return setBreakpointsAsync([entry.binAddr])
         })
-        .then(() => workerOpAsync("reset"))
+        .then(() => {
+            let f = lastCompileResult.outfiles[pxtc.BINARY_UF2]
+            let blocks = pxtc.UF2.parseFile(U.stringToUint8Array(atob(f)))
+            return hid.flashAsync(blocks) // this will reset into app at the end
+        })
         .then(clearHalted)
         .then(waitForHaltAsync)
         .then(res => writeDebugStatusAsync(1).then(() => res))
@@ -174,61 +162,51 @@ export function handleMessage(msg: pxsim.DebuggerMessage) {
     }
 }
 
-export function snapshotAsync(): Promise<MachineState> {
-    return workerOpAsync("snapshot")
-        .then(r => r.state as MachineState)
-}
-
-export function restoreAsync(st: MachineState): Promise<void> {
-    return workerOpAsync("restore", { state: st })
-        .then(() => { })
-}
-
 export function resumeAsync(into = false) {
     return Promise.resolve()
         .then(() => writeDebugStatusAsync(into ? 3 : 1))
-        .then(() => setBreakpointsAsync(nextBreakpoints))
-        .then(() => workerOpAsync("resume"))
+        .then(() => hid.talkAsync(HF2_DBG_RESUME))
         .then(clearHalted)
 }
 
 export interface HwState {
-    globals_addr: number;
+    staticState: StateInfo;
     globals: number[];
 }
 
 export function waitForHaltAsync() {
-    U.assert(haltCheckRunning)
     return onHalted
 }
 
-let hid: pxt.HF2.Wrapper
 function initAsync() {
     if (hid)
         return Promise.resolve(hid)
     return hidbridge.initAsync()
         .then(d => {
             hid = d
+            hid.onEvent(HF2_EV_DBG_PAUSED, corePaused)
             return d
         })
 }
 
-
-export function getHwStateAsync() {
-    let res: HwState = {
-        globals_addr: 0,
-        globals: []
-    }
+function getStaticStateAsync() {
+    if (cachedStaticState) return Promise.resolve(cachedStaticState)
     return initAsync()
         .then(() => hid.talkAsync(HF2_DBG_GET_GLOBAL_STATE))
+        .then(buf => (cachedStaticState = {
+            numGlobals: r32(buf, 0),
+            globalsPtr: r32(buf, 4)
+        }))
+}
+
+export function getHwStateAsync() {
+    return getStaticStateAsync()
+        .then(st => hid.readWordsAsync(st.globalsPtr, st.numGlobals))
         .then(buf => {
-            let numGlobals = r32(buf, 0)
-            res.globals_addr = r32(buf, 4)
-            return hid.readWordsAsync(res.globals_addr, numGlobals)
-        })
-        .then(buf => {
-            for (let i = 0; i < buf.length; i += 4)
-                res.globals.push(r32(buf, i))
+            let res: HwState = {
+                staticState: cachedStaticState,
+                globals: H.decodeU32LE(buf)
+            }
             return res
         })
 }

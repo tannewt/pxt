@@ -17,6 +17,7 @@ namespace pxt.HF2 {
         sendPacketAsync(pkt: Uint8Array): Promise<void>;
         onData: (v: Uint8Array) => void;
         onError: (e: Error) => void;
+        onEvent: (v: Uint8Array) => void;
         error(msg: string): any;
         reconnectAsync(): Promise<void>;
 
@@ -99,6 +100,7 @@ namespace pxt.HF2 {
     const HF2_STATUS_OK = 0x00
     const HF2_STATUS_INVALID_CMD = 0x01
     const HF2_STATUS_EXEC_ERR = 0x02
+    const HF2_STATUS_EVENT = 0x80
 
 
     export function write32(buf: ArrayLike<number>, pos: number, v: number) {
@@ -164,7 +166,21 @@ namespace pxt.HF2 {
                         ptr += f.length
                     }
                     frames = []
-                    this.msgs.push(r)
+                    if (r[2] & HF2_STATUS_EVENT) {
+                        // asynchronous event
+                        io.onEvent(r)
+                    } else {
+                        this.msgs.push(r)
+                    }
+                }
+            }
+            io.onEvent = buf => {
+                let evid = read32(buf, 0)
+                let f = U.lookup(this.eventHandlers, evid + "")
+                if (f) {
+                    f(buf.slice(4))
+                } else {
+                    log("unhandled event: " + evid.toString(16))
                 }
             }
             io.onError = err => {
@@ -182,6 +198,7 @@ namespace pxt.HF2 {
         bootloaderMode = false;
         reconnectTries = 0;
         msgs = new U.PromiseBuffer<Uint8Array>()
+        eventHandlers: pxt.Map<(buf: Uint8Array) => void> = {}
 
         onSerial = (buf: Uint8Array, isStderr: boolean) => { };
 
@@ -194,6 +211,11 @@ namespace pxt.HF2 {
             this.maxMsgSize = 63
             this.bootloaderMode = false
             this.msgs.drain()
+        }
+
+        onEvent(id: number, f: (buf: Uint8Array) => void) {
+            id |= 0x8000
+            this.eventHandlers[id + ""] = f
         }
 
         reconnectAsync(first = false): Promise<void> {

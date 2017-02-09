@@ -34,7 +34,7 @@ import * as blocks from "./blocks"
 import * as codecard from "./codecard"
 import * as logview from "./logview"
 import * as draganddrop from "./draganddrop";
-import * as hwdbg from "./hwdbg"
+import * as devdbg from "./devdbg"
 import * as electron from "./electron";
 
 type ISettingsProps = pxt.editor.ISettingsProps;
@@ -941,11 +941,11 @@ export class ProjectView
         return start.then(() => {
             simulator.driver.setHwDebugger({
                 postMessage: (msg) => {
-                    hwdbg.handleMessage(msg as pxsim.DebuggerMessage)
+                    devdbg.handleMessage(msg as pxsim.DebuggerMessage)
                 }
             })
-            hwdbg.postMessage = (msg) => simulator.driver.handleHwDebuggerMsg(msg)
-            return hwdbg.startDebugAsync()
+            devdbg.postMessage = (msg) => simulator.driver.handleHwDebuggerMsg(msg)
+            return devdbg.startDebugAsync()
         })
     }
 
@@ -1541,7 +1541,7 @@ let myexports: any = {
     sim: simulator,
     apiAsync: core.apiAsync,
     showIcons,
-    hwdbg,
+    devdbg,
     assembleCurrent,
     log
 };

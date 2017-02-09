@@ -92,6 +92,7 @@ export class HidIO implements HF2.PacketIO {
     dev: any;
 
     onData = (v: Uint8Array) => { };
+    onEvent = (v: Uint8Array) => { };
     onError = (e: Error) => { };
 
     constructor(private path: string) {

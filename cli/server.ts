@@ -480,6 +480,16 @@ function initSocketServer(wsPort: number) {
                             case "init":
                                 return hio.reconnectAsync()
                                     .then(() => {
+                                        hio.io.onEvent = v => {
+                                            if (!ws) return
+                                            ws.send(JSON.stringify({
+                                                op: "serial",
+                                                result: {
+                                                    path: msg.arg.path,
+                                                    data: U.toHex(v),
+                                                }
+                                            }))
+                                        }
                                         hio.onSerial = (v, isErr) => {
                                             if (!ws) return
                                             ws.send(JSON.stringify({

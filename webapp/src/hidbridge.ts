@@ -76,6 +76,7 @@ export function mkBridgeAsync(): Promise<pxt.HF2.PacketIO> {
 
 class BridgeIO implements pxt.HF2.PacketIO {
     onData = (v: Uint8Array) => { };
+    onEvent = (v: Uint8Array) => { };
     onError = (e: Error) => { };
     onSerial = (v: Uint8Array, isErr: boolean) => { };
 
@@ -85,6 +86,8 @@ class BridgeIO implements pxt.HF2.PacketIO {
     onOOB(v: OOB) {
         if (v.op == "serial") {
             this.onSerial(U.fromHex(v.result.data), v.result.isError)
+        } else if (v.op = "event") {
+            this.onEvent(U.fromHex(v.result.data))
         }
     }
 

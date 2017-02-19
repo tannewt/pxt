@@ -3,11 +3,10 @@
 ## Global flags layout
 
 * `G[0]` - valid or invalid address - single step
-* `G[1]` - 
 
 ## Modes of operation
 
-Just-my-code is selected at compile time.
+Just-my-code is selected (or not) at compile time.
 
 If only one thread - switch flag at context switch.
 
@@ -23,3 +22,12 @@ If only one thread - switch flag at context switch.
 * Need callback just before thread switch
 * re-flashing with break-points vs some dynamic check
 * delimit stack frames - BL return addresses might not be enough
+* if paused, all debugguable code should be paused
+* should the time stop?
+
+## Register not global?
+* use register for unaligned breakpoint - naturally thread-local
+* global 'pause' button - look on the stacks, inject breakpoints
+* still need an exit sequence 
+* for step-over maybe just inject breakpoints in current function
+* cannot step between threads

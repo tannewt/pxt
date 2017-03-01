@@ -829,13 +829,18 @@ namespace ts.pxtc.assembler {
         }
 
 
-        public getSource(clean: boolean) {
+        public getSource(clean: boolean, numStmts = 1) {
             let lenTotal = this.buf ? this.buf.length * 2 : 0
             let lenThumb = this.labels["_program_end"] || lenTotal;
+            let lenCode = this.labels["_js_end"] || lenTotal;
             let res =
                 // ARM-specific
-                lf("; thumb size: {0} bytes; src size {1} bytes\n", lenThumb, lenTotal - lenThumb) +
-                lf("; assembly: {0} lines\n", this.lines.length) +
+                lf("; code size: {0}; data size: {1} bytes; embedded src size {2} bytes\n",
+                    lenCode, lenThumb - lenCode,
+                    lenTotal - lenThumb) +
+                lf("; assembly: {0} lines; density: {1} bytes/stmt\n",
+                    this.lines.length,
+                    Math.round(100 * lenCode / numStmts) / 100) +
                 this.stats + "\n\n"
 
             let skipOne = false

@@ -3321,6 +3321,7 @@ ${lbl}: .short 0xffff
         usedClassInfos: ClassInfo[] = [];
         sourceHash = "";
         checksumBlock: number[];
+        numStmts = 1;
 
         strings: Map<string> = {};
         otherLiterals: string[] = [];

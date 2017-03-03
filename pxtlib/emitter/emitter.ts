@@ -7,6 +7,8 @@ namespace ts.pxtc {
     export import U = pxtc.Util;
 
     export const ON_START_TYPE = "pxt-on-start";
+    export const TS_STATEMENT_TYPE = "typescript_statement";
+    export const TS_OUTPUT_TYPE = "typescript_expression";
     export const BINARY_JS = "binary.js";
     export const BINARY_HEX = "binary.hex";
     export const BINARY_ASM = "binary.asm";
@@ -245,10 +247,10 @@ namespace ts.pxtc {
 
     function isSideEffectfulInitializer(init: Expression) {
         if (!init) return false;
+        if (isStringLiteral(init)) return false;
         switch (init.kind) {
             case SK.NullKeyword:
             case SK.NumericLiteral:
-            case SK.StringLiteral:
             case SK.TrueKeyword:
             case SK.FalseKeyword:
                 return false;
@@ -287,6 +289,7 @@ namespace ts.pxtc {
         blockAllowMultiple?: boolean;
         blockHidden?: boolean; // not available directly in toolbox
         blockImage?: boolean; // for enum variable, specifies that it should use an image from a predefined location
+        blockFieldEditor?: string; // Custom field editor
         fixedInstances?: boolean;
         fixedInstance?: boolean;
         indexedInstanceNS?: string;
@@ -302,6 +305,7 @@ namespace ts.pxtc {
         trackArgs?: number[];
         advanced?: boolean;
         deprecated?: boolean;
+        useEnumVal?: boolean; // for conversion from typescript to blocks with enumVal
 
         // on interfaces
         indexerGet?: string;
@@ -317,6 +321,9 @@ namespace ts.pxtc {
         paramHelp?: pxt.Map<string>;
         // foo.defl=12 -> paramDefl: { foo: "12" }
         paramDefl: pxt.Map<string>;
+
+        // String that can be used to pass parameters to constructors of custom field editors
+        blockFieldEditorParams?: string;
     }
 
     const numberAttributes = ["weight", "imageLiteral"]
@@ -2618,7 +2625,10 @@ ${lbl}: .short 0xffff
             proc.emitLbl(els)
             proc.emitJmp(fin, emitExpr(node.whenFalse), ir.JmpMode.Always)
             proc.emitLbl(fin)
-            return ir.op(EK.JmpValue, [])
+
+            let v = ir.shared(ir.op(EK.JmpValue, []));
+            proc.emitExpr(v); // make sure we save it
+            return v;
         }
 
         function emitSpreadElementExpression(node: SpreadElementExpression) { }
@@ -2626,7 +2636,7 @@ ${lbl}: .short 0xffff
         function emitBlock(node: Block) {
             node.statements.forEach(emit)
         }
-        function checkForLetOrConst(declList: VariableDeclarationList): boolean  {
+        function checkForLetOrConst(declList: VariableDeclarationList): boolean {
             if ((declList.flags & NodeFlags.Let) || (declList.flags & NodeFlags.Const)) {
                 return true;
             }

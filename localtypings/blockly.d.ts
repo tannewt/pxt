@@ -61,6 +61,12 @@ declare namespace Blockly {
         customContextMenu?: any;
     }
 
+    interface FieldDropdownGridToolTipConfig  {
+        enabled: boolean;
+        xOffset?: number;
+        yOffset?: number;
+    }
+
     const Blocks: {
         [index: string]: BlockDefinition;
     }
@@ -93,6 +99,16 @@ declare namespace Blockly {
         constructor(val: ({ src: string; alt: string; width: number; height: number; } | string)[][] | (() => ({ src: string; alt: string; width: number; height: number; } | string)[][]));
     }
 
+    class FieldNumber extends FieldTextInput {
+        constructor(value: string | number, opt_min?: any, opt_max?: any, opt_precision?: any, opt_validator?: any);
+    }
+    class FieldNote extends FieldNumber{
+        constructor(note: string, colour: string | number, opt_validator?: any); 
+    }
+    class FieldDropdownGrid extends FieldDropdown {
+        constructor(menuGenerator: ({ src: string; alt: string; width: number; height: number; } | string)[][], col?: number, width?: number, tooltipCfg?: FieldDropdownGridToolTipConfig ); 
+    }
+    
     class Block {
         static obtain(workspace: Workspace, prototypeName?: string): Block;
 
@@ -361,6 +377,10 @@ declare namespace Blockly {
         rtl?: boolean;
     }
 
+    interface ExtendedOptions extends Options {
+        toolboxType?: string;
+    }
+
     // tslint:disable-next-line
     interface callbackHandler { }
 
@@ -446,4 +466,8 @@ declare namespace Blockly {
     }
 
     var Tooltip: any;
+
+    class PXTUtils {
+        static fadeColour(hex: string, luminosity: number, lighten: boolean): string;
+    }
 }

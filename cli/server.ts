@@ -10,6 +10,7 @@ import * as child_process from 'child_process';
 import * as os from 'os';
 import * as util from 'util';
 import * as hid from './hid';
+import * as serial from './serial';
 
 import U = pxt.Util;
 import Cloud = pxt.Cloud;
@@ -25,24 +26,6 @@ let docsDir = ""
 let packagedDir = ""
 let localHexDir = path.join("built", "hexcache");
 let electronHandlers: pxt.Map<ElectronHandler> = {};
-
-export function forkPref() {
-    if (pxt.appTarget.forkof)
-        return "node_modules/pxt-" + pxt.appTarget.forkof + "/"
-    else
-        return ""
-}
-function forkDirs(lst: string[]) {
-    if (pxt.appTarget.id == "core") {
-        lst = lst.map(s => s.replace(/node_modules\/pxt-core\//, ""))
-    }
-    let res = lst.map(p => path.join(root, p))
-    let fp = forkPref()
-    if (fp) {
-        U.pushRange(res, lst.map(p => path.join(root, fp + p)))
-    }
-    return res
-}
 
 function setupDocfilesdirs() {
     docfilesdirs = [
@@ -408,17 +391,7 @@ export function expandDocFileTemplate(name: string) {
     return expandDocTemplateCore(template)
 }
 
-export interface SerialPortInfo {
-    comName: string;
-    pnpId: string;
-    manufacturer: string;
-
-    opened?: boolean;
-    port?: any;
-}
-
 let wsSerialClients: WebSocket[] = [];
-let serialPorts: pxt.Map<SerialPortInfo> = {};
 let electronSocket: WebSocket = null;
 let webappReady = false;
 let electronPendingMessages: ElectronMessage[] = [];
@@ -656,144 +629,17 @@ function sendSerialMsg(msg: string) {
 }
 
 function initSerialMonitor() {
-    if (!pxt.appTarget.serial || !pxt.appTarget.serial.log) return;
-    if (pxt.appTarget.serial.useHF2) {
-        return
-    }
-
-    console.log('serial: monitoring ports...')
-
-    let SerialPort: any;
-    try {
-        SerialPort = require("serialport");
-    } catch (er) {
-        console.warn('serial: failed to load, skipping...');
-        return;
-    }
-
-    function close(info: SerialPortInfo) {
-        console.log('serial: closing ' + info.pnpId);
-        delete serialPorts[info.pnpId];
-    }
-
-    function open(info: SerialPortInfo) {
-        console.log(`serial: connecting to ${info.comName} by ${info.manufacturer} (${info.pnpId})`);
-        serialPorts[info.pnpId] = info;
-        info.port = new SerialPort(info.comName, {
-            baudrate: 115200,
-            autoOpen: false
-        }); // this is the openImmediately flag [default is true]
-        info.port.open(function (error: any) {
-            if (error) {
-                console.log('failed to open: ' + error);
-                close(info);
-            } else {
-                console.log(`serial: connected to ${info.comName} by ${info.manufacturer} (${info.pnpId})`);
-                info.opened = true;
-                info.port.on('data', function (buffer: Buffer) {
-                    //console.log(`data received: ${buffer.length} bytes`);
-                    if (wsSerialClients.length == 0) return;
-                    // send it to ws clients
-                    let msg = JSON.stringify({
-                        type: 'serial',
-                        id: info.pnpId,
-                        data: buffer.toString('utf8')
-                    })
-                    sendSerialMsg(msg)
-                });
-                info.port.on('error', function () { close(info); });
-                info.port.on('close', function () { close(info); });
-            }
-        });
-    }
-
-    let manufacturerRx = pxt.appTarget.serial.manufacturerFilter ? new RegExp(pxt.appTarget.serial.manufacturerFilter, "i") : undefined;
-    function filterPort(info: SerialPortInfo): boolean {
-        return manufacturerRx ? manufacturerRx.test(info.manufacturer) : true;
-    }
-
-    setInterval(() => {
-        SerialPort.list(function (err: any, ports: SerialPortInfo[]) {
-            ports.filter(filterPort)
-                .filter(info => !serialPorts[info.pnpId])
-                .forEach((info) => open(info));
-        });
-    }, 5000);
-}
-
-function openUrl(startUrl: string, browser: string) {
-    if (!/^[a-z0-9A-Z#=\.\-\\\/%:\?_&]+$/.test(startUrl)) {
-        console.error("invalid URL to open: " + startUrl)
-        return
-    }
-    let cmds: pxt.Map<string> = {
-        darwin: "open",
-        win32: "start",
-        linux: "xdg-open"
-    }
-    if (/^win/.test(os.platform()) && !/^[a-z0-9]+:\/\//i.test(startUrl))
-        startUrl = startUrl.replace('/', '\\');
-    else
-        startUrl = startUrl.replace('\\', '/');
-
-    console.log(`opening ${startUrl}`)
-
-    if (browser) {
-        child_process.spawn(getBrowserLocation(browser), [startUrl]);
-    }
-    else {
-        child_process.exec(`${cmds[process.platform]} ${startUrl}`);
-    }
-}
-
-function getBrowserLocation(browser: string) {
-    let browserPath: string;
-
-    const normalizedBrowser = browser.toLowerCase();
-
-    if (normalizedBrowser === "chrome") {
-        switch (os.platform()) {
-            case "win32":
-            case "win64":
-                browserPath = "C:/Program Files (x86)/Google/Chrome/Application/chrome.exe";
-                break;
-            case "darwin":
-                browserPath = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-                break;
-            case "linux":
-                browserPath = "/opt/google/chrome/chrome";
-                break;
-            default:
-                break;
-        }
-    }
-    else if (normalizedBrowser === "firefox") {
-        browserPath = "C:/Program Files (x86)/Mozilla Firefox/firefox.exe";
-        switch (os.platform()) {
-            case "win32":
-            case "win64":
-                browserPath = "C:/Program Files (x86)/Mozilla Firefox/firefox.exe";
-                break;
-            case "darwin":
-                browserPath = "/Applications/Firefox.app";
-                break;
-            case "linux":
-            default:
-                break;
-        }
-    }
-    else if (normalizedBrowser === "ie") {
-        browserPath = "C:/Program Files/Internet Explorer/iexplore.exe";
-    }
-    else if (normalizedBrowser === "safari") {
-        browserPath = "/Applications/Safari.app/Contents/MacOS/Safari";
-    }
-
-    if (browserPath && fs.existsSync(browserPath)) {
-        return browserPath;
-    }
-
-    return browser;
+    serial.monitorSerial(function (info, buffer) {
+        //console.log(`data received: ${buffer.length} bytes`);
+        if (wsSerialClients.length == 0) return;
+        // send it to ws clients
+        let msg = JSON.stringify({
+            type: 'serial',
+            id: info.pnpId,
+            data: buffer.toString('utf8')
+        })
+        sendSerialMsg(msg)
+    })
 }
 
 export interface ElectronMessage {
@@ -1064,7 +910,7 @@ export function serveAsync(options: ServeOptions) {
             console.log(`---------------------------------------------`);
 
             if (options.autoStart) {
-                openUrl(start, options.browser);
+                nodeutil.openUrl(start, options.browser);
             }
         });
 }

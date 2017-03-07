@@ -31,3 +31,13 @@ If only one thread - switch flag at context switch.
 * still need an exit sequence 
 * for step-over maybe just inject breakpoints in current function
 * cannot step between threads
+
+## Rewriting strategy
+* global pause - rewrite all user code to have breakpoints
+* step-into - same
+* step-over - rewrite current function to have breakpoint right after the function being stepped over
+* if breakpoint hit - check if the breakpoint should be there and if not, fix up flash; for step-over compare flash height
+
+## Behavior?
+* step-into `fiber_sleep()`? should step into next running thread if any
+* gcc usage of high registers? yes

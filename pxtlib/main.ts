@@ -9,10 +9,10 @@ namespace pxt {
     export import Util = pxtc.Util;
     const lf = U.lf;
 
-    export var appTarget: TargetBundle;
+    export let appTarget: TargetBundle;
 
     export function setAppTarget(trg: TargetBundle) {
-        appTarget = trg
+        appTarget = trg || <TargetBundle>{};
 
         // patch-up the target
         let comp = appTarget.compile
@@ -26,9 +26,9 @@ namespace pxt {
             comp.shortPointers = true
             comp.flashCodeAlign = 0x10
         }
-        if (!trg.appTheme) trg.appTheme = {}
-        if (!trg.appTheme.embedUrl)
-            trg.appTheme.embedUrl = trg.appTheme.homeUrl
+        if (!appTarget.appTheme) appTarget.appTheme = {}
+        if (!appTarget.appTheme.embedUrl)
+            appTarget.appTheme.embedUrl = appTarget.appTheme.homeUrl
         let cs = appTarget.compileService
         if (cs) {
             if (cs.yottaTarget && !cs.yottaBinary)
@@ -100,15 +100,17 @@ namespace pxt {
         workerjs: string;  // "/beta---worker",
         tdworkerjs: string;  // "/beta---tdworker",
         monacoworkerjs: string; // "/beta---monacoworker",
-        pxtVersion: string; // "0.3.8",
-        pxtRelId: string; // "zstad",
-        pxtCdnUrl: string; // "https://az851932.vo.msecnd.net/app/zstad/c/",
+        pxtVersion: string; // "?",
+        pxtRelId: string; // "9e298e8784f1a1d6787428ec491baf1f7a53e8fa",
+        pxtCdnUrl: string; // "https://pxt.azureedge.net/commit/9e2...e8fa/",
+        commitCdnUrl: string; // "https://pxt.azureedge.net/commit/9e2...e8fa/",
+        blobCdnUrl: string; // "https://pxt.azureedge.net/commit/9e2...e8fa/",
+        cdnUrl: string; // "https://pxt.azureedge.net"
         targetUrl: string; // "https://pxt.microbit.org"
-        targetVersion: string; // "0.2.108",
-        targetRelId: string; // "zowrj",
-        targetCdnUrl: string; // "https://az851932.vo.msecnd.net/app/zowrj/c/",
+        targetVersion: string; // "?",
+        targetRelId: string; // "9e298e8784f1a1d6787428ec491baf1f7a53e8fa",
         targetId: string; // "microbit",
-        simUrl: string; // "https://trg-microbit.kindscript.net/sim/zowrj"
+        simUrl: string; // "https://trg-microbit.userpxt.io/beta---simulator"
         partsUrl?: string; // /beta---parts
         runUrl?: string; // "/beta---run"
         docsUrl?: string; // "/beta---docs"
@@ -124,10 +126,12 @@ namespace pxt {
             pxtVersion: "local",
             pxtRelId: "",
             pxtCdnUrl: "/cdn/",
+            commitCdnUrl: "/cdn/",
+            blobCdnUrl: "/blb/",
+            cdnUrl: "/cdn/",
             targetUrl: "",
             targetVersion: "local",
             targetRelId: "",
-            targetCdnUrl: "/sim/",
             targetId: appTarget ? appTarget.id : "",
             simUrl: "/sim/simulator.html",
             partsUrl: "/sim/siminstructions.html"
@@ -139,7 +143,7 @@ namespace pxt {
 
     export function getOnlineCdnUrl(): string {
         if (!webConfig) return null
-        let m = /^(https:\/\/[^\/]+)/.exec(webConfig.pxtCdnUrl)
+        let m = /^(https:\/\/[^\/]+)/.exec(webConfig.commitCdnUrl)
         if (m) return m[1]
         else return null
     }
@@ -501,9 +505,8 @@ namespace pxt {
 
             let initPromise = Promise.resolve()
 
-            this.isLoaded = true
+            this.isLoaded = true;
             const str = this.readFile(pxt.CONFIG_NAME);
-            const mainTs = this.readFile("main.ts");
             if (str == null) {
                 if (!isInstall)
                     U.userError("Package not installed: " + this.id)
@@ -537,7 +540,10 @@ namespace pxt {
                 .then(() => {
                     if (this.level === 0) {
                         // Check for missing packages. We need to add them 1 by 1 in case they conflict with eachother.
-                        const missingPackages = this.getMissingPackages(<PackageConfig>JSON.parse(str), mainTs);
+                        const mainTs = this.readFile("main.ts");
+                        if (!mainTs) return Promise.resolve(null);
+
+                        const missingPackages = this.getMissingPackages(this.config, mainTs);
                         let didAddPackages = false;
                         let addPackagesPromise = Promise.resolve();
                         Object.keys(missingPackages).reduce((addPackagesPromise, missing) => {
@@ -686,7 +692,7 @@ namespace pxt {
                     U.userError(lf("please add '{0}' to \"files\" in {1}", fn, pxt.CONFIG_NAME))
                 cont = "// Auto-generated. Do not edit.\n" + cont + "\n// Auto-generated. Do not edit. Really.\n"
                 if (this.host().readFile(this, fn) !== cont) {
-                    pxt.debug(`updating ${fn} (size=${cont.length})...`)
+                    pxt.log(`updating ${fn} (size=${cont.length})...`)
                     this.host().writeFile(this, fn, cont)
                 }
             }
@@ -695,7 +701,7 @@ namespace pxt {
                 let updatedCont = this.upgradeAPI(cont);
                 if (updatedCont != cont) {
                     // save file (force write)
-                    pxt.debug(`updating APIs in ${fn} (size=${cont.length})...`)
+                    pxt.log(`updating APIs in ${fn} (size=${cont.length})...`)
                     this.host().writeFile(this, fn, updatedCont, true)
                 }
                 return updatedCont;
@@ -806,6 +812,21 @@ namespace pxt {
                 })
         }
 
+        compressToFileAsync(editor?: string): Promise<Uint8Array> {
+            return this.filesToBePublishedAsync(true)
+                .then(files => {
+                    const project: pxt.cpp.HexFile = {
+                        meta: {
+                            cloudId: pxt.CLOUD_ID + pxt.appTarget.id,
+                            targetVersions: pxt.appTarget.versions,
+                            editor: editor || pxt.BLOCKS_PROJECT_NAME,
+                            name: this.config.name
+                        },
+                        source: JSON.stringify(files, null, 2)
+                    }
+                    return pxt.lzmaCompressAsync(JSON.stringify(project, null, 2));
+                });
+        }
 
         computePartDefinitions(parts: string[]): pxt.Map<pxsim.PartDefinition> {
             if (!parts || !parts.length) return {};
@@ -839,9 +860,13 @@ namespace pxt {
 
     let _targetConfig: pxt.TargetConfig = undefined;
     export function targetConfigAsync(): Promise<pxt.TargetConfig> {
+        if (!_targetConfig && !Cloud.isOnline()) // offline
+            return Promise.resolve(undefined);
         return _targetConfig ? Promise.resolve(_targetConfig)
             : Cloud.privateGetAsync(`config/${pxt.appTarget.id}/targetconfig`)
-                .then(js => { _targetConfig = js; return _targetConfig; });
+                .then(
+                js => { _targetConfig = js; return _targetConfig; },
+                err => { _targetConfig = undefined; return undefined; });
     }
     export function packagesConfigAsync(): Promise<pxt.PackagesConfig> {
         return targetConfigAsync().then(config => config ? config.packages : undefined);

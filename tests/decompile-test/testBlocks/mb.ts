@@ -152,4 +152,35 @@ declare namespace basic {
     //% async
     //% parts="ledmatrix" interval.defl=150 shim=basic::showNumber
     export function showNumber(value: number, interval?: number): void;
+
+    /**
+     * Repeats the code forever in the background. On each iteration, allows other codes to run.
+     * @param body code to execute
+     */
+    //% help=basic/forever weight=55 blockGap=8 blockAllowMultiple=1
+    //% blockId=device_forever block="forever" icon="\uf01e" shim=basic::forever
+    export function forever(a: () => void): void;
+}
+
+enum Melodies {
+    //% block="dadadum" blockIdentity=music.builtInMelody
+    Dadadadum = 0,
+    //% block="blues" blockIdentity=music.builtInMelody
+    Blues,
+}
+
+ /**
+ * Generation of music tones through pin ``P0``.
+ */
+//% color=#D83B01 weight=98 icon="\uf025"
+namespace music {
+    /**
+     * Gets the melody array of a built-in melody.
+     * @param name the note name, eg: Note.C
+     */
+    //% weight=50 help=music/builtin-melody
+    //% blockId=device_builtin_melody block="%melody"
+    //% blockHidden=true
+    export function builtInMelody(melody: Melodies): number { return 0 };
+
 }
